@@ -34,16 +34,83 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "your_secret_key")  # Replace wit
 sheet_data_cache = {}
 
 def fetch_data_from_sheets(sheet_name):
-    # Fetch data logic (same as before)
-    ...
+    """
+    Fetch data from a specific Google Sheet range.
+    """
+    if sheet_name not in SHEET_RANGES:
+        raise ValueError(f"Sheet name '{sheet_name}' is not defined in SHEET_RANGES.")
+    
+    if sheet_name in sheet_data_cache:
+        return sheet_data_cache[sheet_name]
+
+    range_ = SHEET_RANGES[sheet_name]
+    credentials = None
+
+    # Authentication
+    if os.path.exists(TOKEN_PATH):
+        credentials = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+    if not credentials or not credentials.valid:
+        if credentials and credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            credentials = flow.run_local_server(port=0)
+        with open(TOKEN_PATH, "w") as token_file:
+            token_file.write(credentials.to_json())
+
+    try:
+        # Fetch data
+        service = build("sheets", "v4", credentials=credentials)
+        sheets = service.spreadsheets()
+        result = sheets.values().get(spreadsheetId=SPREADSHEET_ID, range=range_).execute()
+        values = result.get("values", [])
+        if not values:
+            raise ValueError(f"No data found in the '{sheet_name}' sheet.")
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(values[1:], columns=values[0])  # Assume first row is header
+        required_columns = ["Team", "G", "PF", "PA"] if sheet_name != "NBA" else ["Team", "PPG", "OPP PPG"]
+        for col in required_columns:
+            if col not in df.columns:
+                raise ValueError(f"Missing required column '{col}' in the sheet.")
+        
+        # Convert columns to numeric where applicable
+        for col in df.columns:
+            if col != "Team":  # Skip "Team" column
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        
+        # Cache data
+        sheet_data_cache[sheet_name] = df.set_index("Team", drop=False)
+        return sheet_data_cache[sheet_name]
+    except HttpError as error:
+        logging.error(f"An API error occurred: {error}")
+        raise RuntimeError("Failed to fetch data from Google Sheets.")
 
 def find_closest_match(user_input, team_list):
-    # Fuzzy matching logic (same as before)
-    ...
+    """
+    Find the closest team name match to the user's input using fuzzy matching.
+    """
+    matches = get_close_matches(user_input, team_list, n=1, cutoff=0.6)
+    return matches[0] if matches else None
 
 def calculate_predicted(team1, team2, df, sheet_name):
-    # Prediction calculation logic (same as before)
-    ...
+    """
+    Generalized function to calculate predicted over/under score.
+    """
+    team1_stats = df.loc[team1]
+    team2_stats = df.loc[team2]
+
+    if sheet_name == "NBA":
+        predicted = (team1_stats["PPG"] + team1_stats["OPP PPG"] +
+                     team2_stats["PPG"] + team2_stats["OPP PPG"]) / 2
+    else:
+        team1_avg_for = team1_stats["PF"] / team1_stats["G"]
+        team1_avg_against = team1_stats["PA"] / team1_stats["G"]
+        team2_avg_for = team2_stats["PF"] / team2_stats["G"]
+        team2_avg_against = team2_stats["PA"] / team2_stats["G"]
+        predicted = (team1_avg_for + team1_avg_against +
+                     team2_avg_for + team2_avg_against) / 2
+    return predicted
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -52,8 +119,8 @@ def index():
     sheet_name = None
     teams = []
 
-    # Initialize session history if it doesn't exist
-    if "history" not in session:
+    # Clear history if the user refreshes the page (GET request)
+    if request.method == "GET":
         session["history"] = []
 
     if request.method == "POST":
@@ -72,14 +139,20 @@ def index():
             else:
                 result = calculate_predicted(team1_match, team2_match, data, sheet_name)
 
-                # Save input and result to session history
-                session["history"].append({
+                # Initialize session history if it doesn't exist
+                if "history" not in session:
+                    session["history"] = []
+
+                # Avoid duplicates in the history
+                new_entry = {
                     "sheet": sheet_name,
                     "team1": team1_match,
                     "team2": team2_match,
                     "result": f"{result:.1f}"
-                })
-                session.modified = True  # Mark session as modified to save changes
+                }
+                if new_entry not in session["history"]:
+                    session["history"].append(new_entry)
+                    session.modified = True  # Mark session as modified to save changes
         except Exception as e:
             error_message = f"Error: {e}"
 
@@ -90,6 +163,8 @@ def index():
         sheet_name=sheet_name,
         history=session.get("history", [])  # Pass user-specific history
     )
+
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))  # Use the PORT environment variable

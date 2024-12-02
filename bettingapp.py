@@ -87,6 +87,9 @@ def fetch_data_from_sheets(sheet_name):
         raise RuntimeError("Failed to fetch data from Google Sheets.")
 
 def find_closest_match(user_input, team_list):
+    """
+    Find the closest team name match to the user's input using fuzzy matching.
+    """
     user_input = user_input.strip().lower()
     normalized_teams = [team.lower() for team in team_list]
 
@@ -102,6 +105,9 @@ def find_closest_match(user_input, team_list):
     return None
 
 def calculate_predicted(team1, team2, df, sheet_name):
+    """
+    Generalized function to calculate predicted over/under score.
+    """
     team1_stats = df.loc[team1]
     team2_stats = df.loc[team2]
 
@@ -116,7 +122,7 @@ def calculate_predicted(team1, team2, df, sheet_name):
         predicted = (team1_avg_for + team1_avg_against +
                      team2_avg_for + team2_avg_against) / 2
 
-    return predicted
+    return round(predicted, 1)  # Round to the nearest tenth
 
 @app.route("/", methods=["GET", "POST"])
 def index():

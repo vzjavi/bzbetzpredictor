@@ -39,7 +39,7 @@
             font-weight: bold;
             color: #bbbbbb;
         }
-        input {
+        select, input {
             padding: 10px;
             font-size: 16px;
             border: 1px solid #444444;
@@ -115,18 +115,26 @@
     <div class="container">
         <h1>Bz Betz Predictor</h1>
         <form method="POST">
+            <!-- Dropdown for Sports Selection -->
             <label for="sheet_name">Select Sport:</label>
-            <input type="text" id="sheet_name" name="sheet_name" placeholder="e.g., NBA, NCAAF, NFL" required>
+            <select name="sheet_name" id="sheet_name" required>
+                <option value="NCAAF">NCAAF</option>
+                <option value="NBA">NBA</option>
+                <option value="NFL">NFL</option>
+            </select>
 
+            <!-- Input for Team 1 -->
             <label for="team1">Enter Team 1:</label>
             <input type="text" id="team1" name="team1" placeholder="e.g., Rockets" required>
 
+            <!-- Input for Team 2 -->
             <label for="team2">Enter Team 2:</label>
             <input type="text" id="team2" name="team2" placeholder="e.g., Suns" required>
 
             <button type="submit">Predict</button>
         </form>
 
+        <!-- Display Results -->
         {% if error_message %}
             <p class="result error">{{ error_message }}</p>
         {% endif %}
@@ -135,6 +143,7 @@
             <p class="result"><strong>Predicted Over/Under:</strong> {{ result }}</p>
         {% endif %}
 
+        <!-- History Section -->
         <div class="history-section">
             <h2>Prediction History</h2>
             <div class="history">

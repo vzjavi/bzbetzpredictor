@@ -67,7 +67,7 @@ h3, h4 {
 
 .btn:hover {
     background-color: #00ff40;
-    border-color: #00ff22;
+    border-color: #000000;
 }
 
 /* Results Section */
@@ -79,10 +79,10 @@ h3, h4 {
 
 /* Saved Matchups Section */
 .list-group-item {
-    font-size: 1rem;
+    font-size: 1.25rem;
     text-align: center;
     padding: 0.75rem 1rem;
-    color: #333333;
+    color: #000000;
 }
 
 /* Footer Styling */
@@ -113,7 +113,7 @@ footer {
     padding: 2rem; /* Increase padding for a larger appearance */
     border: 2px solid #ddd; /* Subtle border for emphasis */
     border-radius: 12px; /* Rounded corners for smooth edges */
-    background-color: #ffffff; /* Clean white background */
+    background-color: #44cf37; /* Clean white background */
     box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15); /* Slightly deeper shadow for depth */
     text-align: center; /* Center align content */
 }

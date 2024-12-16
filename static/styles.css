@@ -1,93 +1,153 @@
-/* General page styling */
-body {
-    font-family: Arial, sans-serif;
-    background-color: #121212; /* Black background */
-    color: #e0e0e0; /* Light gray text */
+/* General Styling */
+html, body {
+    font-family: 'Lilita One', cursive; /* Global font */
+    background-color: #f8f9fa; /* Light gray background */
+    color: #333;
     margin: 0;
-    padding: 0;
+    height: 100%;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+}
+
+/* Main Content Fills Remaining Space */
+main {
+    flex: 1; /* Push footer to bottom */
+}
+
+/* Centered and Proportional Form */
+.card {
+    max-width: 600px; /* Limits width of the form */
+    margin: 1.5rem auto; /* Center horizontally with top spacing */
+    border-radius: 12px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1); /* Subtle shadow for depth */
+    background-color: #ffffff; /* White card background */
+    padding: 1.5rem;
+}
+
+/* Headings Styling */
+h2 {
+    font-size: 2rem;
+    text-align: center;
+    color: #333333;
+    margin-bottom: 1.5rem;
+}
+
+h3, h4 {
+    font-size: 1.5rem;
+    text-align: center;
+    color: #000000;
+    margin-bottom: 1rem;
+}
+
+/* Form Labels */
+.form-label {
+    font-size: 1rem;
+    font-weight: normal;
+    color: #555555; /* Slightly darker text */
+}
+
+/* Form Select Styling */
+.form-select {
+    border-radius: 5px;
+    font-size: 1rem;
+    padding: 0.5rem 0.75rem;
+}
+
+/* Submit Button */
+.btn {
+    font-size: 1.2rem;
+    border: 2px solid #000000; /* Black outline */
+    font-weight: normal;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    background-color: #44cf37;
+    border-color: #000000;
+    color: #000000;
+}
+
+.btn:hover {
+    background-color: #00ff40;
+    border-color: #00ff22;
+}
+
+/* Results Section */
+.card h3 {
+    font-size: 2rem;
+    color: #28a745; /* Green color for results */
+    font-weight: normal;
+}
+
+/* Saved Matchups Section */
+.list-group-item {
+    font-size: 1rem;
+    text-align: center;
+    padding: 0.75rem 1rem;
+    color: #333333;
+}
+
+/* Footer Styling */
+footer {
+    background-color: #343a40;
+    color: #f8f9fa;
+    text-align: center;
+    padding: 1rem 0;
+    font-size: 0.9rem;
+    margin-top: auto;
+}
+
+/* Custom Badge with Outline */
+.custom-badge {
+    background-color: #44cf37; /* Green background */
+    border: 2px solid #000000; /* Black outline */
+    color: #000000; /* Black text */
+    font-weight: normal; /* Make it stand out */
+    padding: 0.5rem 1rem; /* Adjust spacing inside */
+    border-radius: 5px; /* Rounded corners */
+    display: inline-block; /* Ensures consistent sizing */
+    text-align: center; /* Centers the text */
+}
+
+/* Saved Matchups Section Styling */
+.saved-matchups {
+    margin-top: 2rem; /* Add spacing above */
+    padding: 2rem; /* Increase padding for a larger appearance */
+    border: 2px solid #ddd; /* Subtle border for emphasis */
+    border-radius: 12px; /* Rounded corners for smooth edges */
+    background-color: #ffffff; /* Clean white background */
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15); /* Slightly deeper shadow for depth */
+    text-align: center; /* Center align content */
+}
+
+/* Saved Matchup Heading */
+.saved-matchups h4 {
+    font-size: 2.2rem; /* Larger font for emphasis */
+    color: #333333; /* Dark gray for readability */
+    margin-bottom: 1.5rem; /* Spacing under heading */
+}
+
+/* Saved Matchup Items */
+.saved-matchups .list-group-item {
+    font-size: 1.2rem; /* Larger text for readability */
+    font-weight: normal; /* Medium bold for better visibility */
+    padding: 1.2rem; /* Increased spacing inside each item */
+    display: flex;
+    justify-content: space-between; /* Align content to both ends */
     align-items: center;
-    min-height: 100vh;
+    border: none; /* Remove border for a clean look */
+    background-color: #f8f9fa; /* Light gray background for items */
+    margin-bottom: 0.5rem; /* Space between items */
+    border-radius: 8px; /* Rounded corners */
 }
 
-.container {
-    background: #1e1e1e; /* Dark gray container */
-    border-radius: 10px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
-    padding: 20px 40px;
-    max-width: 600px;
-    width: 90%;
-}
-
-h1 {
-    color: #ffffff;
+/* Badge Styling - Larger and Clearer */
+.custom-badge {
+    background-color: #44cf37; /* Green background */
+    border: 2px solid #000000; /* Black outline */
+    color: #000000; /* Black text */
+    font-size: 1.1rem; /* Slightly larger text */
+    font-weight: normal;
+    padding: 0.6rem 1.2rem; /* Larger padding for a bigger badge */
+    border-radius: 8px; /* Rounded badge */
     text-align: center;
-    margin-bottom: 20px;
 }
 
-form {
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-}
-
-label {
-    font-weight: bold;
-    color: #bbbbbb;
-}
-
-select, input {
-    padding: 10px;
-    font-size: 16px;
-    border: 1px solid #444444;
-    border-radius: 5px;
-    background-color: #333333;
-    color: #ffffff;
-}
-
-button {
-    padding: 10px 15px;
-    background-color: #4CAF50; /* Green */
-    color: white;
-    border: none;
-    border-radius: 5px;
-    font-size: 16px;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
-
-button:hover {
-    background-color: #45a049; /* Darker green on hover */
-}
-
-.result {
-    margin-top: 20px;
-    font-size: 18px;
-    color: #cccccc;
-}
-
-.history-section {
-    margin-top: 30px;
-}
-
-.history-section h2 {
-    text-align: center;
-    color: #ffffff;
-    margin-bottom: 10px;
-}
-
-.history {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.history-item {
-    background: #292929; /* Slightly lighter gray */
-    padding: 10px 15px;
-    border-radius: 5px;
-    border: 1px solid #444444;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    color: #e0e0e0;
-}

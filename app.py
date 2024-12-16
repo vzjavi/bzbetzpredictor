@@ -1,6 +1,6 @@
 import os
 import logging
-from flask import Flask, render_template, request, session
+from flask import Flask, render_template, request, session, jsonify
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -12,7 +12,7 @@ from difflib import get_close_matches
 # Configure logging
 logging.basicConfig(level=logging.ERROR, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Google Sheets API Scopes
+# Google Sheets API Scopes and Configuration
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SPREADSHEET_ID = "1ub_a9jetvc9BB6paGVIQ_0N_ETXLMEG43tD7zeE3Ljg"
 SHEET_RANGES = {
@@ -21,33 +21,24 @@ SHEET_RANGES = {
     "NFL": "NFL!A1:D135",
 }
 
-# Load credentials and token paths from Render's environment variables
-CREDENTIALS_PATH = os.getenv("CREDENTIALS_JSON_PATH", "credentials.json")
-TOKEN_PATH = os.getenv("TOKEN_JSON_PATH", "token.json")
+CREDENTIALS_PATH = "credentials.json"
+TOKEN_PATH = "token.json"
 
 # Initialize Flask app
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "your_secret_key")  # Replace with a secure random key in production
-
-# Cache data to avoid multiple API calls
+app.secret_key = "your_secret_key"  # Replace with a secure key in production
 sheet_data_cache = {}
 
 def fetch_data_from_sheets(sheet_name):
     """
-    Fetch data from a specific Google Sheet range.
+    Fetches data from Google Sheets and caches it.
     """
-    sheet_name = sheet_name.strip().lower()
-    sheet_ranges_normalized = {key.lower(): key for key in SHEET_RANGES}
+    if sheet_name in sheet_data_cache:
+        return sheet_data_cache[sheet_name]
 
-    if sheet_name not in sheet_ranges_normalized:
-        raise ValueError(f"Sheet name '{sheet_name}' is not valid. Please choose from: {', '.join(SHEET_RANGES.keys())}.")
-
-    actual_sheet_name = sheet_ranges_normalized[sheet_name]
-
-    if actual_sheet_name in sheet_data_cache:
-        return sheet_data_cache[actual_sheet_name]
-
-    range_ = SHEET_RANGES[actual_sheet_name]
+    range_ = SHEET_RANGES.get(sheet_name)
+    if not range_:
+        raise ValueError("Invalid sheet name.")
 
     try:
         credentials = None
@@ -63,32 +54,31 @@ def fetch_data_from_sheets(sheet_name):
                 token_file.write(credentials.to_json())
 
         service = build("sheets", "v4", credentials=credentials)
-        sheets = service.spreadsheets()
-        result = sheets.values().get(spreadsheetId=SPREADSHEET_ID, range=range_).execute()
+        result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_).execute()
         values = result.get("values", [])
         if not values:
-            raise ValueError(f"No data found in the '{actual_sheet_name}' sheet.")
+            raise ValueError("No data found in the sheet.")
 
+        # Convert data to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
-        required_columns = ["Team", "PPG", "OPP PPG"] if actual_sheet_name == "NBA" else ["Team", "G", "PF", "PA"]
-        for col in required_columns:
-            if col not in df.columns:
-                raise ValueError(f"Missing required column '{col}' in the sheet.")
 
-        for col in df.columns:
-            if col != "Team":
+        # Convert numeric columns to proper types
+        numeric_columns = ["PPG", "OPP PPG"] if sheet_name == "NBA" else ["G", "PF", "PA"]
+        for col in numeric_columns:
+            if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        sheet_data_cache[actual_sheet_name] = df.set_index("Team", drop=False)
-        return sheet_data_cache[actual_sheet_name]
+        sheet_data_cache[sheet_name] = df.set_index("Team", drop=False)
+        return sheet_data_cache[sheet_name]
 
     except HttpError as error:
         logging.error(f"An API error occurred: {error}")
         raise RuntimeError("Failed to fetch data from Google Sheets.")
 
+
 def find_closest_match(user_input, team_list):
     """
-    Find the closest team name match to the user's input using fuzzy matching.
+    Find the closest matching team name using fuzzy matching.
     """
     user_input = user_input.strip().lower()
     normalized_teams = [team.lower() for team in team_list]
@@ -104,35 +94,16 @@ def find_closest_match(user_input, team_list):
         return team_list[index]
     return None
 
-def calculate_predicted(team1, team2, df, sheet_name):
-    """
-    Generalized function to calculate predicted over/under score.
-    """
-    team1_stats = df.loc[team1]
-    team2_stats = df.loc[team2]
-
-    if sheet_name.lower() == "nba":
-        predicted = (team1_stats["PPG"] + team1_stats["OPP PPG"] +
-                     team2_stats["PPG"] + team2_stats["OPP PPG"]) / 2
-    else:
-        team1_avg_for = team1_stats["PF"] / team1_stats["G"]
-        team1_avg_against = team1_stats["PA"] / team1_stats["G"]
-        team2_avg_for = team2_stats["PF"] / team2_stats["G"]
-        team2_avg_against = team2_stats["PA"] / team2_stats["G"]
-        predicted = (team1_avg_for + team1_avg_against +
-                     team2_avg_for + team2_avg_against) / 2
-
-    return round(predicted, 1)  # Round to the nearest tenth
-
 @app.route("/", methods=["GET", "POST"])
 def index():
     result = None
     error_message = None
-    sheet_name = None
-    teams = []
+    selected_team1 = None
+    selected_team2 = None
 
+    # Clear session history when the user refreshes the page (GET request)
     if request.method == "GET":
-        session["history"] = []
+        session.pop("history", None)  # Remove 'history' from session
 
     if request.method == "POST":
         sheet_name = request.form.get("sheet_name")
@@ -140,43 +111,73 @@ def index():
         team2 = request.form.get("team2")
 
         try:
+            # Fetch the correct sheet data
             data = fetch_data_from_sheets(sheet_name)
-            teams = data["Team"].unique()
-            team1_match = find_closest_match(team1, teams)
-            team2_match = find_closest_match(team2, teams)
+            teams = data["Team"].tolist()
 
-            if not team1_match or not team2_match:
-                closest_matches = [
-                    f"Closest match for '{team1}': {find_closest_match(team1, teams) or 'None'}",
-                    f"Closest match for '{team2}': {find_closest_match(team2, teams) or 'None'}"
-                ]
-                error_message = (
-                    "One or both team names were not found. Please try again."
-                    f" {closest_matches[0]} | {closest_matches[1]}."
-                )
+            # Find closest matches for the teams
+            selected_team1 = find_closest_match(team1, teams)
+            selected_team2 = find_closest_match(team2, teams)
+
+            if not selected_team1 or not selected_team2:
+                error_message = "One or both team names not found."
             else:
-                result = calculate_predicted(team1_match, team2_match, data, sheet_name)
+                # Over/Under calculation logic
+                if sheet_name == "NBA":
+                    result = round((data.loc[selected_team1, "PPG"] +
+                                    data.loc[selected_team1, "OPP PPG"] +
+                                    data.loc[selected_team2, "PPG"] +
+                                    data.loc[selected_team2, "OPP PPG"]) / 2, 1)
+                else:
+                    result = round((data.loc[selected_team1, "PF"] / data.loc[selected_team1, "G"] +
+                                    data.loc[selected_team1, "PA"] / data.loc[selected_team1, "G"] +
+                                    data.loc[selected_team2, "PF"] / data.loc[selected_team2, "G"] +
+                                    data.loc[selected_team2, "PA"] / data.loc[selected_team2, "G"]) / 2, 1)
+
+                # Save the result and matchup to session history
                 if "history" not in session:
                     session["history"] = []
                 session["history"].append({
-                    "sheet": sheet_name,
-                    "team1": team1_match,
-                    "team2": team2_match,
-                    "result": f"{result:.1f}"
+                    "sport": sheet_name,
+                    "team1": selected_team1,
+                    "team2": selected_team2,
+                    "result": result
                 })
-                session.modified = True
-        except ValueError as ve:
-            error_message = str(ve)
+                session.modified = True  # Mark session as modified
+
         except Exception as e:
-            error_message = f"Error: {e}"
+            error_message = f"Error occurred: {str(e)}"
 
     return render_template(
-        "index.html",
-        result=result,
-        error_message=error_message,
-        sheet_name=sheet_name,
-        history=session.get("history", [])
+        "index.html", 
+        result=result, 
+        error_message=error_message, 
+        history=session.get("history", []),
+        selected_team1=selected_team1,
+        selected_team2=selected_team2
     )
+
+
+
+
+@app.route('/get-teams', methods=['GET'])
+def get_teams():
+    try:
+        all_teams = {}  # Dictionary to hold teams categorized by sheet name
+
+        # Iterate through all sheet names in SHEET_RANGES
+        for sheet_name, sheet_range in SHEET_RANGES.items():
+            data = fetch_data_from_sheets(sheet_name)  # Fetch sheet data
+            teams = data["Team"].tolist()  # Extract the "Team" column
+            all_teams[sheet_name] = teams  # Store under the sheet name
+
+        # Log for debugging
+        print("Fetched Teams from All Sheets:", all_teams)
+
+        return jsonify(all_teams)  # Return the categorized teams
+    except Exception as e:
+        logging.error(f"Error fetching teams: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

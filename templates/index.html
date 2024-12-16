@@ -3,40 +3,67 @@
 {% block title %}Home - Bz Betz Predictor{% endblock %}
 
 {% block content %}
-<form method="POST">
-    <label for="sheet_name">Select Sport:</label>
-    <select name="sheet_name" id="sheet_name" required>
-        <option value="NCAAF">NCAAF</option>
-        <option value="NBA">NBA</option>
-        <option value="NFL">NFL</option>
-    </select>
+<h2 class="text-center mb-4">Enter Matchups:</h2>
 
-    <label for="team1">Enter Team 1:</label>
-    <input type="text" id="team1" name="team1" placeholder="e.g., Rockets" required>
+<div class="card p-4 shadow-sm">
+    <form method="POST" id="prediction-form">
+        <div class="mb-3">
+            <label for="sheet_name" class="form-label">Select Sport</label>
+            <select class="form-select searchable" name="sheet_name" id="sheet_name" required>
+                <option value="" disabled selected>Choose a sport</option>
+                <option value="NCAAF">NCAAF</option>
+                <option value="NBA">NBA</option>
+                <option value="NFL">NFL</option>
+            </select>
+        </div>
 
-    <label for="team2">Enter Team 2:</label>
-    <input type="text" id="team2" name="team2" placeholder="e.g., Suns" required>
+        <div class="mb-3">
+            <label for="team1" class="form-label">Select Team 1</label>
+            <select class="form-select searchable" name="team1" id="team1" required>
+                <option value="" disabled selected>Choose Team 1</option>
+            </select>
+        </div>
 
-    <button type="submit">Predict</button>
-</form>
+        <div class="mb-3">
+            <label for="team2" class="form-label">Select Team 2</label>
+            <select class="form-select searchable" name="team2" id="team2" required>
+                <option value="" disabled selected>Choose Team 2</option>
+            </select>
+        </div>
 
-{% if error_message %}
-    <p class="result error">{{ error_message }}</p>
-{% endif %}
-
-{% if result %}
-    <p class="result"><strong>Predicted Over/Under:</strong> {{ result }}</p>
-{% endif %}
-
-<div class="history-section">
-    <h2>Prediction History</h2>
-    <div class="history">
-        {% for entry in history %}
-            <div class="history-item">
-                <strong>{{ entry.team1 }}</strong> vs <strong>{{ entry.team2 }}</strong><br>
-                <span>Predicted Over/Under: <strong>{{ entry.result }}</strong></span>
-            </div>
-        {% endfor %}
-    </div>
+        <button type="submit" class="btn btn-primary w-100">Submit</button>
+    </form>
 </div>
+
+<!-- Error Message -->
+{% if error_message %}
+<div class="alert alert-danger mt-3">{{ error_message }}</div>
+{% endif %}
+
+<!-- Results Section 
+{% if result and selected_team1 and selected_team2 %}
+<div class="card mt-4 p-4 shadow-sm">
+    <h4 class="text-center">Projected Over/Under</h4>
+    <p class="text-center fs-5">
+        <strong>{{ selected_team1 }}</strong> vs. <strong>{{ selected_team2 }}</strong>
+    </p>
+    <h3 class="text-center text-primary">{{ result }}</h3>
+</div>
+{% endif %}-->
+
+<!-- Saved Matchups -->
+{% if history %}
+<div class="card mt-4 p-4 shadow-sm">
+    <h4 class="text-center">Saved Matchups</h4>
+    <ul class="list-group">
+        {% for item in history %}
+        <li class="list-group-item">
+            <strong>{{ item.sport }}:</strong> {{ item.team1 }} vs. {{ item.team2 }}
+            <span class="badge custom-badge float-end">Projected O/U: {{ item.result }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
 {% endblock %}

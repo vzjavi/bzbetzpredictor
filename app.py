@@ -19,6 +19,7 @@ SHEET_RANGES = {
     "NCAAF": "NCAAF!A1:D135",
     "NBA": "NBA!A1:D31",
     "NFL": "NFL!A1:D135",
+    "MLB": "MLB!A1:D31",
 }
 
 CREDENTIALS_PATH = "credentials.json"

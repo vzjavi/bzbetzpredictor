@@ -79,21 +79,46 @@ def fetch_data_from_sheets(sheet_name):
 
 def find_closest_match(user_input, team_list):
     """
-    Find the closest matching team name using fuzzy matching.
+    Improve matching: try exact, alias, then fuzzy matching.
     """
     user_input = user_input.strip().lower()
+    
+    # Alias map for common short names or nicknames
+    alias_map = {
+        "nets": "Brooklyn Nets",
+        "hornets": "Charlotte Hornets",
+        "mavs": "Dallas Mavericks",
+        "knicks": "New York Knicks",
+        "lakers": "Los Angeles Lakers",
+        "clips": "Los Angeles Clippers",
+        "dubs": "Golden State Warriors",
+        "suns": "Phoenix Suns",
+        "cavs": "Cleveland Cavaliers",
+        "pelicans": "New Orleans Pelicans",
+        # Add more aliases as needed
+    }
+
+    # 1. Exact match
+    for team in team_list:
+        if user_input == team.lower():
+            return team
+
+    # 2. Alias match
+    if user_input in alias_map:
+        alias_target = alias_map[user_input].lower()
+        for team in team_list:
+            if team.lower() == alias_target:
+                return team
+
+    # 3. Fuzzy match fallback
     normalized_teams = [team.lower() for team in team_list]
-
-    for team in normalized_teams:
-        if user_input in team:
-            index = normalized_teams.index(team)
-            return team_list[index]
-
-    matches = get_close_matches(user_input, normalized_teams, n=1, cutoff=0.3)
-    if matches:
-        index = normalized_teams.index(matches[0])
+    close_matches = get_close_matches(user_input, normalized_teams, n=1, cutoff=0.6)
+    if close_matches:
+        index = normalized_teams.index(close_matches[0])
         return team_list[index]
+
     return None
+
 
 @app.route("/", methods=["GET", "POST"])
 def index():

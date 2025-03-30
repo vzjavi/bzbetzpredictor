@@ -16,7 +16,8 @@ import pytz
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Load logo data from local JSON
-creds_dict = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+with open("team_logos.json", "r") as f:
+    logo_data = json.load(f)
 
 # Flask app setup
 app = Flask(__name__)

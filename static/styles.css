@@ -1,153 +1,79 @@
 /* General Styling */
 html, body {
-    font-family: 'Lilita One', cursive; /* Global font */
-    background-color: #f8f9fa; /* Light gray background */
+    font-family: 'Lilita One', cursive;
+    background-color: #f3f4f6;
     color: #333;
     margin: 0;
+    padding: 0;
     height: 100%;
-    display: flex;
-    flex-direction: column;
 }
-
-/* Main Content Fills Remaining Space */
-main {
-    flex: 1; /* Push footer to bottom */
-}
-
-/* Centered and Proportional Form */
-.card {
-    max-width: 600px; /* Limits width of the form */
-    margin: 1.5rem auto; /* Center horizontally with top spacing */
-    border-radius: 12px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1); /* Subtle shadow for depth */
-    background-color: #ffffff; /* White card background */
-    padding: 1.5rem;
-}
-
-/* Headings Styling */
-h2 {
-    font-size: 2rem;
-    text-align: center;
-    color: #333333;
-    margin-bottom: 1.5rem;
-}
-
-h3, h4 {
-    font-size: 1.5rem;
-    text-align: center;
-    color: #000000;
-    margin-bottom: 1rem;
-}
-
-/* Form Labels */
-.form-label {
-    font-size: 1rem;
-    font-weight: normal;
-    color: #555555; /* Slightly darker text */
-}
-
-/* Form Select Styling */
-.form-select {
-    border-radius: 5px;
-    font-size: 1rem;
-    padding: 0.5rem 0.75rem;
-}
-
-/* Submit Button */
-.btn {
-    font-size: 1.2rem;
-    border: 2px solid #000000; /* Black outline */
-    font-weight: normal;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    background-color: #44cf37;
-    border-color: #000000;
-    color: #000000;
-}
-
-.btn:hover {
-    background-color: #00ff40;
-    border-color: #000000;
-}
-
-/* Results Section */
-.card h3 {
-    font-size: 2rem;
-    color: #28a745; /* Green color for results */
-    font-weight: normal;
-}
-
-/* Saved Matchups Section */
-.list-group-item {
-    font-size: 1.25rem;
-    text-align: center;
-    padding: 0.75rem 1rem;
-    color: #000000;
-}
-
-/* Footer Styling */
-footer {
-    background-color: #343a40;
-    color: #f8f9fa;
+header {
+    background-color: #1f2937;
+    color: #fff;
     text-align: center;
     padding: 1rem 0;
-    font-size: 0.9rem;
-    margin-top: auto;
+    font-size: 2rem;
 }
-
-/* Custom Badge with Outline */
-.custom-badge {
-    background-color: #44cf37; /* Green background */
-    border: 2px solid #000000; /* Black outline */
-    color: #000000; /* Black text */
-    font-weight: normal; /* Make it stand out */
-    padding: 0.5rem 1rem; /* Adjust spacing inside */
-    border-radius: 5px; /* Rounded corners */
-    display: inline-block; /* Ensures consistent sizing */
-    text-align: center; /* Centers the text */
-}
-
-/* Saved Matchups Section Styling */
-.saved-matchups {
-    margin-top: 2rem; /* Add spacing above */
-    padding: 2rem; /* Increase padding for a larger appearance */
-    border: 2px solid #ddd; /* Subtle border for emphasis */
-    border-radius: 12px; /* Rounded corners for smooth edges */
-    background-color: #44cf37; /* Clean white background */
-    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15); /* Slightly deeper shadow for depth */
-    text-align: center; /* Center align content */
-}
-
-/* Saved Matchup Heading */
-.saved-matchups h4 {
-    font-size: 2.2rem; /* Larger font for emphasis */
-    color: #333333; /* Dark gray for readability */
-    margin-bottom: 1.5rem; /* Spacing under heading */
-}
-
-/* Saved Matchup Items */
-.saved-matchups .list-group-item {
-    font-size: 1.2rem; /* Larger text for readability */
-    font-weight: normal; /* Medium bold for better visibility */
-    padding: 1.2rem; /* Increased spacing inside each item */
+main {
     display: flex;
-    justify-content: space-between; /* Align content to both ends */
-    align-items: center;
-    border: none; /* Remove border for a clean look */
-    background-color: #f8f9fa; /* Light gray background for items */
-    margin-bottom: 0.5rem; /* Space between items */
-    border-radius: 8px; /* Rounded corners */
+    justify-content: center;
+    padding: 2rem 1rem;
 }
-
-/* Badge Styling - Larger and Clearer */
-.custom-badge {
-    background-color: #44cf37; /* Green background */
-    border: 2px solid #000000; /* Black outline */
-    color: #000000; /* Black text */
-    font-size: 1.1rem; /* Slightly larger text */
-    font-weight: normal;
-    padding: 0.6rem 1.2rem; /* Larger padding for a bigger badge */
-    border-radius: 8px; /* Rounded badge */
+.prediction-container {
+    background-color: #fff;
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+    max-width: 800px;
+    width: 100%;
+}
+.prediction-container h2 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
     text-align: center;
 }
-
+.prediction-container h4 {
+    font-size: 1.2rem;
+    color: #000000;
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+th, td {
+    padding: 0.75rem;
+    text-align: center;
+    border: 1px solid #ddd;
+    font-size: 1rem;
+}
+th {
+    background-color: #f0f0f0;
+    font-weight: bold;
+}
+td img {
+    height: 28px;
+    vertical-align: middle;
+    margin-right: 0.5rem;
+}
+.prediction-value {
+    font-weight: bold;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    display: inline-block;
+    min-width: 60px;
+}
+@media (max-width: 600px) {
+    .prediction-container {
+        padding: 1rem;
+    }
+    th, td {
+        font-size: 0.9rem;
+        padding: 0.5rem;
+    }
+    td img {
+        height: 22px;
+    }
+}

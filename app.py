@@ -1,10 +1,15 @@
 import os
 import logging
 import json
+<<<<<<< HEAD
 import requests
 import pandas as pd
 from flask import Flask, render_template
 from google.oauth2.service_account import Credentials
+=======
+from google.oauth2.service_account import Credentials
+from flask import Flask, render_template, request, session, jsonify
+>>>>>>> b46f39f81b65cbcd3041115f2c09946977226ed1
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from datetime import datetime
@@ -33,12 +38,18 @@ SHEET_RANGES = {
     "MLB": "MLB!A1:D31",
 }
 
+<<<<<<< HEAD
 API_KEY = "697039"
 SPORT_LEAGUES = {
     "NBA": "4387",
     "MLB": "4424"
 }
 
+=======
+# Initialize Flask app
+app = Flask(__name__)
+app.secret_key = "your_secret_key"  # Replace with a secure key in production
+>>>>>>> b46f39f81b65cbcd3041115f2c09946977226ed1
 sheet_data_cache = {}
 LOCAL_TIMEZONE = pytz.timezone("America/New_York")
 
@@ -114,17 +125,44 @@ def fetch_data_from_sheets(sheet_name):
         raise ValueError("Invalid sheet name.")
 
     try:
+<<<<<<< HEAD
         with open("service_account.json") as f:
             creds_dict = json.load(f)
         creds = Credentials.from_service_account_info(creds_dict)
         scoped = creds.with_scopes(['https://www.googleapis.com/auth/spreadsheets.readonly'])
 
+=======
+        # Local development: load credentials from JSON file directly
+        with open("service_account.json") as f:
+            creds_dict = json.load(f)
+
+        creds = Credentials.from_service_account_info(creds_dict)
+        scoped = creds.with_scopes(['https://www.googleapis.com/auth/spreadsheets.readonly'])
+
+>>>>>>> b46f39f81b65cbcd3041115f2c09946977226ed1
         service = build("sheets", "v4", credentials=scoped)
         result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_).execute()
         values = result.get("values", [])
         if not values:
             raise ValueError("No data found in the sheet.")
 
+<<<<<<< HEAD
+=======
+        df = pd.DataFrame(values[1:], columns=values[0])
+        numeric_columns = ["PPG", "OPP PPG"] if sheet_name == "NBA" else ["G", "PF", "PA"]
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        sheet_data_cache[sheet_name] = df.set_index("Team", drop=False)
+        return sheet_data_cache[sheet_name]
+
+    except HttpError as error:
+        logging.error(f"An API error occurred: {error}")
+        raise RuntimeError("Failed to fetch data from Google Sheets.")
+
+        # Convert data to DataFrame
+>>>>>>> b46f39f81b65cbcd3041115f2c09946977226ed1
         df = pd.DataFrame(values[1:], columns=values[0])
         numeric_columns = ["PPG", "OPP PPG"] if sheet_name == "NBA" else ["G", "PF", "PA"]
         for col in numeric_columns:

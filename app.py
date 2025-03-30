@@ -5,7 +5,6 @@ import requests
 import pandas as pd
 from flask import Flask, render_template
 from google.oauth2.service_account import Credentials
-from google.oauth2.service_account import Credentials
 from flask import Flask, render_template, request, session, jsonify
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -17,8 +16,7 @@ import pytz
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Load logo data from local JSON
-with open("team_logos.json", "r") as f:
-    logo_data = json.load(f)
+creds_dict = json.loads(os.environ["GOOGLE_CREDS_JSON"])
 
 # Flask app setup
 app = Flask(__name__)

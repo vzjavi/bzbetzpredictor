@@ -1,9 +1,8 @@
 import os
 import logging
+import json
+from google.oauth2.service_account import Credentials
 from flask import Flask, render_template, request, session, jsonify
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import pandas as pd
@@ -22,18 +21,12 @@ SHEET_RANGES = {
     "MLB": "MLB!A1:D31",
 }
 
-CREDENTIALS_PATH = "credentials.json"
-TOKEN_PATH = "token.json"
-
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = "your_secret_key"  # Replace with a secure key in production
 sheet_data_cache = {}
 
 def fetch_data_from_sheets(sheet_name):
-    """
-    Fetches data from Google Sheets and caches it.
-    """
     if sheet_name in sheet_data_cache:
         return sheet_data_cache[sheet_name]
 
@@ -42,23 +35,31 @@ def fetch_data_from_sheets(sheet_name):
         raise ValueError("Invalid sheet name.")
 
     try:
-        credentials = None
-        if os.path.exists(TOKEN_PATH):
-            credentials = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
-        if not credentials or not credentials.valid:
-            if credentials and credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
-                credentials = flow.run_local_server(port=0)
-            with open(TOKEN_PATH, "w") as token_file:
-                token_file.write(credentials.to_json())
+        # Local development: load credentials from JSON file directly
+        with open("service_account.json") as f:
+            creds_dict = json.load(f)
 
-        service = build("sheets", "v4", credentials=credentials)
+        creds = Credentials.from_service_account_info(creds_dict)
+        scoped = creds.with_scopes(['https://www.googleapis.com/auth/spreadsheets.readonly'])
+
+        service = build("sheets", "v4", credentials=scoped)
         result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_).execute()
         values = result.get("values", [])
         if not values:
             raise ValueError("No data found in the sheet.")
+
+        df = pd.DataFrame(values[1:], columns=values[0])
+        numeric_columns = ["PPG", "OPP PPG"] if sheet_name == "NBA" else ["G", "PF", "PA"]
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        sheet_data_cache[sheet_name] = df.set_index("Team", drop=False)
+        return sheet_data_cache[sheet_name]
+
+    except HttpError as error:
+        logging.error(f"An API error occurred: {error}")
+        raise RuntimeError("Failed to fetch data from Google Sheets.")
 
         # Convert data to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])

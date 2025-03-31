@@ -41,7 +41,7 @@ SPORT_LEAGUES = {
 }
 
 sheet_data_cache = {}
-LOCAL_TIMEZONE = pytz.timezone("America/New_York")
+LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
 
 TEAM_ALIASES = {
     "Philadelphia 76ers": "76ers",
@@ -141,14 +141,36 @@ def fetch_data_from_sheets(sheet_name):
 
 def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
-    today = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsday.php?d={today}&l={league_id}"
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    season_map = {
+        "NBA": "2024-2025",
+        "MLB": "2025"
+    }
+    season = season_map.get(league_name, "2024")
+    url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
     try:
         response = requests.get(url)
         data = response.json()
-        return data.get("events", [])
+        raw_events = data.get("events")
+        if raw_events is None:
+            logging.warning(f"No events returned from API for {league_name} — check season and league ID")
+            raw_events = []
+
+        def is_game_today(game):
+            if not game.get("dateEvent") or not game.get("strTime"):
+                return False
+            dt_str = f"{game['dateEvent']} {game['strTime']}"
+            try:
+                game_dt_utc = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
+                game_dt_cst = game_dt_utc.astimezone(LOCAL_TIMEZONE)
+                return game_dt_cst.date() == today
+            except Exception as e:
+                logging.warning(f"Could not parse game datetime: {dt_str}, error: {e}")
+                return False
+
+        return [game for game in raw_events if is_game_today(game)]
     except Exception as e:
-        logging.error(f"Error fetching {league_name} games: {e}")
+        logging.error(f"Error fetching {league_name} season games: {e}")
         return []
 
 def find_team_match(team_name, team_list):
@@ -176,6 +198,7 @@ def get_team_logo(team_short_name, sport):
 def predict_game_totals(league_name):
     predictions = []
     games = get_todays_games(league_name)
+    logging.info(f"{league_name} games fetched: {len(games)}")
     stats_df = fetch_data_from_sheets(league_name)
     team_list = stats_df.index.tolist()
     seen_matchups = set()
@@ -227,16 +250,20 @@ def predict_game_totals(league_name):
 
     return predictions
 
+
+
+
 @app.route("/")
 def index():
     all_predictions = []
-    for sport in SPORT_LEAGUES:
-        all_predictions.extend(predict_game_totals(sport))
+    for sport in ["NBA", "MLB"]:
+        sport_predictions = predict_game_totals(sport)
+        logging.info(f"{sport} predictions: {len(sport_predictions)} games")
+        all_predictions.extend(sport_predictions)
 
-    all_predictions = sorted(all_predictions, key=lambda x: (x.get("game_time") or datetime.max))
-    today = datetime.now()
-    return render_template("index.html", predictions=all_predictions, now=today)
+    all_predictions = sorted(all_predictions, key=lambda x: x.get("game_time") or datetime.max)
+    return render_template("index.html", predictions=all_predictions, now=datetime.now(LOCAL_TIMEZONE))
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

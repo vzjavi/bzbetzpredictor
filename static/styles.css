@@ -14,6 +14,23 @@ header {
     padding: 1rem 0;
     font-size: 2rem;
 }
+.logo {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+    height: 90px; /* adjust if needed */
+}
+
+.logo img {
+    height: 100%;
+    width: auto;
+    object-fit: contain;
+    display: block;
+}
+
 main {
     display: flex;
     justify-content: center;

@@ -3,27 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <title>Bz Betz Predictor</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
         body {
-            font-family: 'Poppins', sans-serif;
-            background: #f5f6fa;
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(to bottom, #f5f6fa, #e6ecf3);
             margin: 0;
             padding: 40px 10px;
         }
 
-        h1, h3 {
-            text-align: center;
-            margin: 0;
-        }
-
-        h1 {
-            font-size: 2.5em;
+        .logo {
+            display: flex;
+            justify-content: center;
             margin-bottom: 10px;
         }
 
+        .logo img {
+            height: 100px;
+            width: auto;
+            transition: transform 0.3s ease;
+        }
+
+        .logo img:hover {
+            transform: scale(1.05);
+        }
+
         h3 {
-            font-weight: normal;
+            text-align: center;
+            font-weight: 400;
             color: #444;
             margin-bottom: 30px;
         }
@@ -33,26 +40,38 @@
             max-width: 1000px;
             margin: 0 auto;
             border-collapse: collapse;
-            background-color: #fff;
+            background: rgba(255, 255, 255, 0.8);
             border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 0 15px rgba(0,0,0,0.05);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: center;
+            border: 1px solid #ccc;
         }
 
         th {
             background: linear-gradient(to right, #164919, #4aff02);
             color: white;
-            padding: 15px;
-        }
-
-        td {
-            padding: 15px;
-            text-align: center;
-            border-bottom: 1px solid #eee;
+            font-weight: 600;
+            text-shadow:
+                -1px -1px 0 #000,  
+                 1px -1px 0 #000,
+                -1px  1px 0 #000,
+                 1px  1px 0 #000;
         }
 
         tr:hover {
             background-color: #f0f4ff;
+            transition: background-color 0.3s ease;
         }
 
         td.matchup {
@@ -88,12 +107,18 @@
                 height: 40px;
                 width: 40px;
             }
+
+            thead th {
+                position: static;
+            }
         }
     </style>
 </head>
 <body>
-    <h1>Bz Betz Predictor</h1>
-    <h3>Over/Under Predictions for {{ now.strftime("%B %d, %Y") }}</h3>
+    <div class="logo">
+        <img src="{{ url_for('static', filename='XHE1qwUp_400x400.png') }}" alt="BZ Bets Logo">
+    </div>
+    <h3>Over/Under Predictions for {{ now.strftime('%B %d, %Y') }}</h3>
     <table>
         <thead>
             <tr>

@@ -3,13 +3,13 @@ import logging
 import json
 import requests
 import pandas as pd
-from flask import Flask, render_template
-from google.oauth2.service_account import Credentials
 from flask import Flask, render_template, request, session, jsonify
+from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from datetime import datetime
 from difflib import get_close_matches
+from espn_scraper import run_scraper
 import pytz
 
 # Logging config
@@ -252,7 +252,6 @@ def predict_game_totals(league_name):
 
 
 
-
 @app.route("/")
 def index():
     all_predictions = []
@@ -266,4 +265,6 @@ def index():
 
 
 if __name__ == "__main__":
+    print("📊 Running ESPN scraper manually on startup...")
+    run_scraper()
     app.run(host="0.0.0.0", port=5000)

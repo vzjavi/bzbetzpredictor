@@ -37,7 +37,9 @@ SHEET_RANGES = {
 API_KEY = "697039"
 SPORT_LEAGUES = {
     "NBA": "4387",
-    "MLB": "4424"
+    "MLB": "4424",
+    "NCAAF": "4479",
+    "NFL": "4391"
 }
 
 sheet_data_cache = {}
@@ -106,38 +108,53 @@ TEAM_ALIASES = {
     "New York Yankees": "Yankees"
 }
 
-def fetch_data_from_sheets(sheet_name):
-    if sheet_name in sheet_data_cache:
-        return sheet_data_cache[sheet_name]
+def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
+    """
+    Loads Team, G, PF, PA from the Google Sheet tab (A1:D).
+    Returns a DataFrame indexed by Team with numeric G/PF/PA.
+    """
+    SHEET_ID = os.environ.get("GOOGLE_SHEETS_ID", "1ub_a9jetvc9BB6paGVIQ_0N_ETXLMEG43tD7zeE3Ljg")
+    creds_path = os.environ.get(
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        os.path.join(os.path.dirname(__file__), "service_account.json"),
+    )
+    creds = Credentials.from_service_account_file(
+        creds_path, scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    service = build("sheets", "v4", credentials=creds)
 
-    range_ = SHEET_RANGES.get(sheet_name)
-    if not range_:
-        raise ValueError("Invalid sheet name.")
+    rng = f"{league_tab}!A1:D1000"
+    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng).execute()
+    values = res.get("values", [])
 
-    try:
-        with open("service_account.json") as f:
-            creds_dict = json.load(f)
-        creds = Credentials.from_service_account_info(creds_dict)
-        scoped = creds.with_scopes(['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    if not values or len(values) < 2:
+        return pd.DataFrame(columns=["G", "PF", "PA"], index=pd.Index([], name="Team"))
 
-        service = build("sheets", "v4", credentials=scoped)
-        result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_).execute()
-        values = result.get("values", [])
-        if not values:
-            raise ValueError("No data found in the sheet.")
+    # Force header to exactly Team,G,PF,PA (ignore any extra columns in the sheet)
+    expected = ["Team", "G", "PF", "PA"]
+    header = (values[0] + ["", "", "", ""])[:4]
+    # Normalize body rows to 4 elements
+    rows = []
+    for r in values[1:]:
+        if isinstance(r, str):
+            r = [r]
+        if not isinstance(r, list):
+            r = [str(r)]
+        r = (r + ["", "", "", ""])[:4]
+        rows.append(r)
 
-        df = pd.DataFrame(values[1:], columns=values[0])
-        numeric_columns = ["PPG", "OPP PPG"] if sheet_name == "NBA" else ["G", "PF", "PA"]
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df = pd.DataFrame(rows, columns=expected)
 
-        sheet_data_cache[sheet_name] = df.set_index("Team", drop=False)
-        return sheet_data_cache[sheet_name]
+    # Drop blank teams
+    df["Team"] = df["Team"].astype(str).str.strip()
+    df = df[df["Team"] != ""]
+    # Coerce numeric
+    for c in ["G", "PF", "PA"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
-    except HttpError as error:
-        logging.error(f"An API error occurred: {error}")
-        raise RuntimeError("Failed to fetch data from Google Sheets.")
+    df.set_index("Team", inplace=True)
+    return df
+
 
 def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
@@ -197,68 +214,89 @@ def get_team_logo(team_short_name, sport):
 
 def predict_game_totals(league_name):
     predictions = []
+
+    # Get today's games from TheSportsDB
     games = get_todays_games(league_name)
     logging.info(f"{league_name} games fetched: {len(games)}")
+
+    # Load stats from Google Sheets (expects columns: Team | G | PF | PA)
     stats_df = fetch_data_from_sheets(league_name)
     team_list = stats_df.index.tolist()
     seen_matchups = set()
 
-    for game in games:
-        team1_api = game.get("strHomeTeam")
-        team2_api = game.get("strAwayTeam")
+    def find_row(team_name):
+        match = find_team_match(team_name, team_list)
+        if not match:
+            return None, None
+        try:
+            return match, stats_df.loc[match]
+        except KeyError:
+            return None, None
 
-        # Parse and convert time to local timezone
-        game_time_utc = None
+    def per_game(row):
+        try:
+            g = float(row.get("G", 0)) or 0.0
+            pf = float(row.get("PF", 0)) or 0.0
+            pa = float(row.get("PA", 0)) or 0.0
+            if g <= 0:
+                return 0.0, 0.0
+            return pf / g, pa / g
+        except Exception:
+            return 0.0, 0.0
+
+    for game in games:
+        team_home = game.get("strHomeTeam")
+        team_away = game.get("strAwayTeam")
+
+        # Parse & localize time
+        game_time_local = None
         if game.get("dateEvent") and game.get("strTime"):
             dt_str = f"{game['dateEvent']} {game['strTime']}"
             try:
                 utc_time = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
-                game_time_utc = utc_time.astimezone(LOCAL_TIMEZONE)
+                game_time_local = utc_time.astimezone(LOCAL_TIMEZONE)
             except Exception as e:
-                logging.warning(f"Could not parse or convert time: {dt_str} — {e}")
+                logging.warning(f"Could not parse/convert time: {dt_str} — {e}")
 
-        team1 = find_team_match(team1_api, team_list)
-        team2 = find_team_match(team2_api, team_list)
+        name1, row1 = find_row(team_home)
+        name2, row2 = find_row(team_away)
 
-        if not team1 or not team2:
-            logging.warning(f"Skipping: {team1_api} vs {team2_api} — unmatched")
+        if not name1 or not name2:
+            logging.warning(f"Skipping: {team_home} vs {team_away} — unmatched")
             continue
 
-        matchup_key = tuple(sorted([team1, team2]))
+        matchup_key = tuple(sorted([name1, name2]))
         if matchup_key in seen_matchups:
             continue
         seen_matchups.add(matchup_key)
 
-        row1 = stats_df.loc[team1]
-        row2 = stats_df.loc[team2]
-
-        if league_name == "NBA":
-            total = round((row1["PPG"] + row1["OPP PPG"] + row2["PPG"] + row2["OPP PPG"]) / 2, 1)
-        else:
-            total = round(((row1["PF"] / row1["G"] + row1["PA"] / row1["G"] +
-                            row2["PF"] / row2["G"] + row2["PA"] / row2["G"]) / 2), 1)
+        pfpg1, papg1 = per_game(row1)
+        pfpg2, papg2 = per_game(row2)
+        predicted_total = round(((pfpg1 + papg1 + pfpg2 + papg2) / 2.0), 1)
 
         predictions.append({
             "sport": league_name,
-            "team1": team1,
-            "team2": team2,
-            "team1_logo": get_team_logo(team1, league_name),
-            "team2_logo": get_team_logo(team2, league_name),
-            "predicted_total": total,
-            "game_time": game_time_utc
+            "team1": name1,
+            "team2": name2,
+            "team1_logo": get_team_logo(name1, league_name),
+            "team2_logo": get_team_logo(name2, league_name),
+            "predicted_total": predicted_total,
+            "game_time": game_time_local
         })
 
     return predictions
 
 
 
+
 @app.route("/")
 def index():
     all_predictions = []
-    for sport in ["NBA", "MLB"]:
+    for sport in ["NBA", "MLB", "NFL", "NCAAF"]:
         sport_predictions = predict_game_totals(sport)
         logging.info(f"{sport} predictions: {len(sport_predictions)} games")
         all_predictions.extend(sport_predictions)
+
 
     all_predictions = sorted(all_predictions, key=lambda x: x.get("game_time") or datetime.max)
     return render_template("index.html", predictions=all_predictions, now=datetime.now(LOCAL_TIMEZONE))

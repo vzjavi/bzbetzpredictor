@@ -160,9 +160,12 @@ def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
     today = datetime.now(LOCAL_TIMEZONE).date()
     season_map = {
-        "NBA": "2024-2025",
-        "MLB": "2025"
-    }
+    "NBA": "2025-2026",
+    "MLB": "2025",
+    "NFL": "2025",
+    "NCAAF": "2025"
+}
+
     season = season_map.get(league_name, "2024")
     url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
     try:

@@ -46,7 +46,13 @@ def fetch_espn_standings(league):
                     except (ValueError, TypeError):
                         pass
 
-            games_played = stats.get("gamesPlayed", stats.get("wins", 0) + stats.get("losses", 0))
+            # ---- FIX: count ties when gamesPlayed is missing ----
+            wins = int(stats.get("wins", 0) or 0)
+            losses = int(stats.get("losses", 0) or 0)
+            ties = int(stats.get("ties", 0) or stats.get("tiesOverall", 0) or 0)
+            games_played = int(stats.get("gamesPlayed") or (wins + losses + ties))
+            # ------------------------------------------------------
+
             # Baseball uses runsFor / runsAgainst, others use pointsFor / pointsAgainst
             pf = stats.get("pointsFor") or stats.get("runsFor")
             pa = stats.get("pointsAgainst") or stats.get("runsAgainst")
@@ -70,7 +76,14 @@ def fetch_espn_standings(league):
                             stats[name] = float(value)
                         except (ValueError, TypeError):
                             pass
-                games_played = stats.get("gamesPlayed", stats.get("wins", 0) + stats.get("losses", 0))
+
+                # ---- FIX (fallback too): count ties if gamesPlayed is missing ----
+                wins = int(stats.get("wins", 0) or 0)
+                losses = int(stats.get("losses", 0) or 0)
+                ties = int(stats.get("ties", 0) or stats.get("tiesOverall", 0) or 0)
+                games_played = int(stats.get("gamesPlayed") or (wins + losses + ties))
+                # ------------------------------------------------------------------
+
                 pf = stats.get("pointsFor") or stats.get("runsFor")
                 pa = stats.get("pointsAgainst") or stats.get("runsAgainst")
                 if team_name and None not in (games_played, pf, pa):

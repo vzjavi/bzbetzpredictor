@@ -11,6 +11,9 @@ from datetime import datetime
 from difflib import get_close_matches
 from espn_scraper import run_scraper
 import pytz
+import logging
+logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
+
 
 # Logging config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

@@ -1,13 +1,17 @@
+import os
+import json
+import logging
+from datetime import datetime
+
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
 
-# Google Sheets config
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-SPREADSHEET_ID = "1ub_a9jetvc9BB6paGVIQ_0N_ETXLMEG43tD7zeE3Ljg"
+SHEET_ID = os.environ.get("GOOGLE_SHEETS_ID", "1ub_a9jetvc9BB6paGVIQ_0N_ETXLMEG43tD7zeE3Ljg")
 
-# ESPN API endpoints per league
 ESPN_URLS = {
     "MLB":  "https://site.api.espn.com/apis/v2/sports/baseball/mlb/standings",
     "NBA":  "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings",
@@ -15,113 +19,110 @@ ESPN_URLS = {
     "NCAAF":"https://site.api.espn.com/apis/v2/sports/football/college-football/standings",
 }
 
-# Use relative ranges (no sheet name)
-SHEET_RANGES = {
-    "MLB":  "A2:D200",
-    "NBA":  "A2:D200",
-    "NFL":  "A2:D500",
-    "NCAAF":"A2:D800",
-}
+# These are the row ranges we write into (inside each worksheet)
+BODY_RANGE = "A2:D1000"
+HEADER_RANGE = "A1:D1"
 
-def fetch_espn_standings(league):
-    print(f"Fetching ESPN standings JSON for {league}...")
+def _load_credentials() -> Credentials:
+    # env JSON
+    blob = os.environ.get("GOOGLE_CREDS_JSON")
+    if blob:
+        return Credentials.from_service_account_info(json.loads(blob), scopes=SCOPES)
+
+    # secret file
+    secret = "/etc/secrets/service_account.json"
+    if os.path.exists(secret):
+        return Credentials.from_service_account_file(secret, scopes=SCOPES)
+
+    # env path or local fallback
+    gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if gac and os.path.exists(gac):
+        return Credentials.from_service_account_file(gac, scopes=SCOPES)
+
+    local = os.path.join(os.path.dirname(__file__), "service_account.json")
+    if os.path.exists(local):
+        return Credentials.from_service_account_file(local, scopes=SCOPES)
+
+    raise RuntimeError("No Google credentials found for espn_scraper.")
+
+def fetch_espn_standings(league: str):
+    logging.info(f"Fetching ESPN standings JSON for {league}...")
     url = ESPN_URLS[league]
-    resp = requests.get(url, timeout=20)
-    resp.raise_for_status()
-    data = resp.json()
+    r = requests.get(url, timeout=20)
+    r.raise_for_status()
+    data = r.json()
 
     teams = []
-    for division in data.get("children", []):
-        for entry in division.get("standings", {}).get("entries", []):
-            team_name = entry.get("team", {}).get("displayName")
 
-            # Extract numeric stats robustly
-            stats = {}
-            for stat in entry.get("stats", []):
-                name = stat.get("name")
-                value = stat.get("value") or stat.get("displayValue")
-                if name and value not in ("-", "", None):
-                    try:
-                        stats[name] = float(value)
-                    except (ValueError, TypeError):
-                        pass
+    # Primary path: children[*].standings.entries[*]
+    for child in data.get("children", []):
+        for entry in (child.get("standings") or {}).get("entries", []):
+            _extract(entry, teams)
 
-            # ---- FIX: count ties when gamesPlayed is missing ----
-            wins = int(stats.get("wins", 0) or 0)
-            losses = int(stats.get("losses", 0) or 0)
-            ties = int(stats.get("ties", 0) or stats.get("tiesOverall", 0) or 0)
-            games_played = int(stats.get("gamesPlayed") or (wins + losses + ties))
-            # ------------------------------------------------------
-
-            # Baseball uses runsFor / runsAgainst, others use pointsFor / pointsAgainst
-            pf = stats.get("pointsFor") or stats.get("runsFor")
-            pa = stats.get("pointsAgainst") or stats.get("runsAgainst")
-
-            if team_name and None not in (games_played, pf, pa):
-                row = [team_name, int(games_played), int(pf), int(pa)]
-                teams.append(row)
-                print(row)
-
-    # Fallback: some responses flatten directly under data["standings"]["entries"]
+    # Fallback if top-level flattening
     if not teams:
-        try:
-            for entry in data["standings"]["entries"]:
-                team_name = entry.get("team", {}).get("displayName")
-                stats = {}
-                for stat in entry.get("stats", []):
-                    name = stat.get("name")
-                    value = stat.get("value") or stat.get("displayValue")
-                    if name and value not in ("-", "", None):
-                        try:
-                            stats[name] = float(value)
-                        except (ValueError, TypeError):
-                            pass
+        for entry in (data.get("standings") or {}).get("entries", []):
+            _extract(entry, teams)
 
-                # ---- FIX (fallback too): count ties if gamesPlayed is missing ----
-                wins = int(stats.get("wins", 0) or 0)
-                losses = int(stats.get("losses", 0) or 0)
-                ties = int(stats.get("ties", 0) or stats.get("tiesOverall", 0) or 0)
-                games_played = int(stats.get("gamesPlayed") or (wins + losses + ties))
-                # ------------------------------------------------------------------
-
-                pf = stats.get("pointsFor") or stats.get("runsFor")
-                pa = stats.get("pointsAgainst") or stats.get("runsAgainst")
-                if team_name and None not in (games_played, pf, pa):
-                    teams.append([team_name, int(games_played), int(pf), int(pa)])
-        except Exception:
-            pass
-
-    print(f"✅ Retrieved data for {len(teams)} {league} teams.")
+    logging.info(f"✅ Retrieved data for {len(teams)} {league} teams.")
     return teams
 
-def update_google_sheet(data, league):
-    print(f"Updating Google Sheet for {league}...")
-    creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
-    client = gspread.authorize(creds)
-    sh = client.open_by_key(SPREADSHEET_ID)
+def _extract(entry, out_list):
+    name = (entry.get("team") or {}).get("displayName")
+    stats = {}
+    for s in entry.get("stats", []):
+        k = s.get("name")
+        v = s.get("value") if s.get("value") not in (None, "-", "") else s.get("displayValue")
+        if k and v not in (None, "-", ""):
+            try:
+                stats[k] = float(v)
+            except Exception:
+                pass
 
-    # Ensure worksheet exists
+    # gamesPlayed fallback for some sports
+    g = stats.get("gamesPlayed", stats.get("wins", 0) + stats.get("losses", 0) + stats.get("ties", 0))
+
+    # Baseball uses runs*, others points*
+    pf = stats.get("pointsFor") or stats.get("runsFor")
+    pa = stats.get("pointsAgainst") or stats.get("runsAgainst")
+
+    if name and pf is not None and pa is not None:
+        row = [name, int(g or 0), int(pf), int(pa)]
+        out_list.append(row)
+        logging.info(str(row))
+
+def _open_worksheet(sh, title: str):
     try:
-        ws = sh.worksheet(league)
+        return sh.worksheet(title)
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=league, rows="1000", cols="10")
+        return sh.add_worksheet(title=title, rows="1000", cols="10")
 
-    # Write header you’re using across the app
-    ws.update("A1:D1", [["Team", "G", "PF", "PA"]])
+def update_google_sheet(league: str, rows):
+    logging.info(f"Updating Google Sheet for {league}...")
+    creds = _load_credentials()
+    client = gspread.authorize(creds)
+    sh = client.open_by_key(SHEET_ID)
 
-    # Clear old body, then write data starting A2 — no sheet name in range
-    ws.batch_clear([SHEET_RANGES[league]])
-    if data:
-        ws.update("A2", data)
-
-    # Timestamp (optional)
+    ws = _open_worksheet(sh, league)
+    ws.update(HEADER_RANGE, [["Team", "G", "PF", "PA"]])
+    ws.batch_clear([BODY_RANGE])
+    if rows:
+        ws.update("A2", rows)
     ws.update("F1", [[f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
-    print("✅ Sheet updated.")
+    logging.info("✅ Sheet updated.")
 
 def run_scraper():
-    for league in ["MLB", "NBA", "NFL", "NCAAF"]:
-        data = fetch_espn_standings(league)
-        if data:
-            update_google_sheet(data, league)
-        else:
-            print(f"❌ No data for {league}.")
+    """Pull ESPN standings for each league and write to the corresponding tab."""
+    summary = {}
+    for lg in ["MLB", "NBA", "NFL", "NCAAF"]:
+        try:
+            data = fetch_espn_standings(lg)
+            summary[lg] = len(data)
+            update_google_sheet(lg, data)
+        except Exception as e:
+            logging.exception(f"❌ {lg} scraping failed: {e}")
+            summary[lg] = 0
+    return summary
+
+if __name__ == "__main__":
+    run_scraper()

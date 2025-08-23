@@ -160,9 +160,12 @@ def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
     today = datetime.now(LOCAL_TIMEZONE).date()
     season_map = {
-        "NBA": "2024-2025",
-        "MLB": "2025"
-    }
+    "NBA": "2025-2026",
+    "MLB": "2025",
+    "NFL": "2025",
+    "NCAAF": "2025"
+}
+
     season = season_map.get(league_name, "2024")
     url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
     try:
@@ -219,12 +222,35 @@ def predict_game_totals(league_name):
     games = get_todays_games(league_name)
     logging.info(f"{league_name} games fetched: {len(games)}")
 
+    # NCAAF: extend team map with any new schedule teams
+    if league_name == "NCAAF":
+        global ncaaf_map
+        schedule_teams = set()
+        for g in games:
+            schedule_teams.add(g.get("home_team"))
+            schedule_teams.add(g.get("away_team"))
+        # Safety: remove None
+        schedule_teams = {t for t in schedule_teams if t}
+        # Use current sheet team list to align stats_key if possible
+        try:
+            ncaaf_map = extend_mapping_with_schedule(schedule_teams, ncaaf_map, sheet_names=None)
+            save_mapping(NCAAF_MAP_PATH, ncaaf_map)
+        except Exception as e:
+            logging.warning(f"NCAAF mapping extend failed: {e}")
+
     # Load stats from Google Sheets (expects columns: Team | G | PF | PA)
     stats_df = fetch_data_from_sheets(league_name)
     team_list = stats_df.index.tolist()
     seen_matchups = set()
 
     def find_row(team_name):
+            # For NCAAF, resolve team -> stats_key before matching
+        if league_name == "NCAAF":
+            try:
+                _, stats_key = resolve_team(team_name, ncaaf_map)
+                team_name = stats_key
+            except Exception as e:
+                logging.warning(f"NCAAF resolve failed for {team_name}: {e}")
         match = find_team_match(team_name, team_list)
         if not match:
             return None, None

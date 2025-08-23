@@ -1,0 +1,62 @@
+{
+  "Kansas": {
+    "aliases": [
+      "Kansas Jayhawks",
+      "KU"
+    ],
+    "stats_key": "Kansas",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Fresno State": {
+    "aliases": [
+      "Fresno State Bulldogs",
+      "Fresno St."
+    ],
+    "stats_key": "Fresno State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Western Kentucky": {
+    "aliases": [
+      "Western Kentucky Hilltoppers",
+      "WKU"
+    ],
+    "stats_key": "Western Kentucky",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Sam Houston State": {
+    "aliases": [
+      "Sam Houston",
+      "Sam Houston Bearkats"
+    ],
+    "stats_key": "Sam Houston State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Kansas State": {
+    "aliases": [
+      "Kansas State Wildcats",
+      "KSU"
+    ],
+    "stats_key": "Kansas State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Iowa State": {
+    "aliases": [
+      "Iowa State Cyclones",
+      "ISU"
+    ],
+    "stats_key": "Iowa State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  }
+}

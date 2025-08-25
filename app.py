@@ -11,6 +11,7 @@ from datetime import datetime
 from difflib import get_close_matches
 from espn_scraper import run_scraper
 import pytz
+from ncaaf_team_matching_helper import extend_mapping_with_schedule, resolve_team, save_mapping
 
 # Logging config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -44,6 +45,14 @@ SPORT_LEAGUES = {
 
 sheet_data_cache = {}
 LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
+
+NCAAF_MAP_PATH = os.path.join(os.path.dirname(__file__), "ncaaf_team_mapping.json")
+
+try:
+    with open(NCAAF_MAP_PATH, "r", encoding="utf-8") as f:
+        ncaaf_map = json.load(f)
+except FileNotFoundError:
+    ncaaf_map = {}
 
 TEAM_ALIASES = {
     "Philadelphia 76ers": "76ers",

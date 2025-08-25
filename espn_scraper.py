@@ -52,11 +52,11 @@ def _load_credentials() -> Credentials:
     raise RuntimeError("No Google credentials found for espn_scraper.")
 
 # -----------------------------------------------------------------------------
-# HTTP session (retries + UA)
+# HTTP (retrying)
 # -----------------------------------------------------------------------------
 def _http() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "bzbetz-predictor/1.3"})
+    s.headers.update({"User-Agent": "bzbetz-predictor/1.4"})
     retries = Retry(
         total=3,
         backoff_factor=0.4,
@@ -67,161 +67,154 @@ def _http() -> requests.Session:
     return s
 
 # -----------------------------------------------------------------------------
-# Utilities
+# Helpers
 # -----------------------------------------------------------------------------
+REC_RX = re.compile(r"^\s*(\d+)\s*-\s*(\d+)(?:\s*-\s*(\d+))?\s*$")
+
 def _to_int(x: Any, default: int = 0) -> int:
     try:
         return int(float(x))
     except Exception:
         return default
 
-def _safe_num(v: Any) -> float:
-    if v in (None, "", "-", "—"):
+def _num(x: Any) -> float:
+    if x in (None, "", "-", "—"):
         return 0.0
     try:
-        return float(v)
+        return float(x)
     except Exception:
         return 0.0
 
-def _parse_record_summary(summary: str) -> Tuple[int, int, int]:
-    """Parse '10-3' or '10-2-1' -> (W,L,T)."""
-    if not summary:
-        return 0, 0, 0
-    m = re.match(r"^\s*(\d+)\s*-\s*(\d+)(?:\s*-\s*(\d+))?\s*$", summary)
+def _parse_record_str(s: str) -> Tuple[int,int,int]:
+    if not s:
+        return 0,0,0
+    m = REC_RX.match(s)
     if not m:
-        return 0, 0, 0
+        return 0,0,0
     return int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
 
-def _looks(name: str, abbr: str, targets: List[str]) -> bool:
+def _looks(name: str, abbr: str, *cands: str) -> bool:
     n = (name or "").lower()
     a = (abbr or "").upper()
-    return (n in targets) or (a in [t.upper() for t in targets])
+    if n in cands: return True
+    return a in {c.upper() for c in cands}
 
 # -----------------------------------------------------------------------------
-# PF/PA + G extraction
+# PF/PA + G extraction (very defensive)
 # -----------------------------------------------------------------------------
-def _extract_pf_pa_g_from_stats(stats_list: List[Dict[str, Any]]) -> Tuple[int, int, int, int, int, int]:
+def _extract_from_stats(stats: List[Dict[str,Any]]) -> Tuple[int,int,int,int,int,int,int]:
     """
-    Scan 'stats' for PF/PA and game counters.
-    Returns (pf, pa, g, wins, losses, ties).
+    Returns (pf, pa, gp_direct, wins, losses, ties, gp_from_recordish_display)
+    - gp_direct: from GP/gamesPlayed style fields
+    - gp_from_recordish_display: parsed from any displayValue like '10-3'
     """
-    pf = pa = g = 0
-    wins = losses = ties = 0
+    pf = pa = gp_direct = wins = losses = ties = gp_rec_disp = 0
 
-    for s in stats_list or []:
+    for s in stats or []:
         name = s.get("name") or ""
         abbr = s.get("abbreviation") or ""
         raw_val = s.get("value")
         if raw_val in (None, "", "-", "—"):
             raw_val = s.get("displayValue")
-        val_num = _safe_num(raw_val)
 
-        lname = name.lower()
+        # PF/PA
+        low = name.lower()
+        if name in ("pointsFor", "runsFor") or _looks(low, abbr, "pf", "points_for", "overallpointsfor") or ("points" in low and ("for" in low or "scored" in low)) or abbr.upper()=="PF":
+            pf = max(pf, _to_int(_num(raw_val), 0))
+        if name in ("pointsAgainst", "runsAgainst") or _looks(low, abbr, "pa", "points_against", "overallpointsagainst") or ("points" in low and ("against" in low or "allowed" in low)) or abbr.upper()=="PA":
+            pa = max(pa, _to_int(_num(raw_val), 0))
 
-        # ---------- games played ----------
-        if _looks(lname, abbr, ["gamesplayed", "games", "gp"]):
-            g = max(g, _to_int(val_num, 0))
-        # Some feeds bury GP as "overallGamesPlayed"
-        if "overall" in lname and ("gamesplayed" in lname or lname.endswith("gp")):
-            g = max(g, _to_int(val_num, 0))
+        # GP direct
+        if _looks(low, abbr, "gamesplayed", "games", "gp") or ("overall" in low and ("gamesplayed" in low or low.endswith("gp"))):
+            gp_direct = max(gp_direct, _to_int(_num(raw_val), 0))
 
-        # ---------- wins/losses/ties ----------
-        if _looks(lname, abbr, ["wins", "w", "overallwins"]):
-            wins = max(wins, _to_int(val_num, 0))
-        if _looks(lname, abbr, ["losses", "l", "overalllosses"]):
-            losses = max(losses, _to_int(val_num, 0))
-        if _looks(lname, abbr, ["ties", "t", "overallties"]):
-            ties = max(ties, _to_int(val_num, 0))
+        # Wins/Losses/Ties (various)
+        if _looks(low, abbr, "wins", "w", "overallwins"):
+            wins = max(wins, _to_int(_num(raw_val), 0))
+        if _looks(low, abbr, "losses", "l", "overalllosses"):
+            losses = max(losses, _to_int(_num(raw_val), 0))
+        if _looks(low, abbr, "ties", "t", "overallties"):
+            ties = max(ties, _to_int(_num(raw_val), 0))
 
-        # ---------- PF / PA ----------
-        # common exact names
-        if name in ("pointsFor", "runsFor") and pf == 0:
-            pf = _to_int(val_num, 0)
-        if name in ("pointsAgainst", "runsAgainst") and pa == 0:
-            pa = _to_int(val_num, 0)
+        # Sometimes a generic "record" appears as a displayValue like "7-3"
+        disp = s.get("displayValue")
+        if isinstance(disp, str):
+            w,l,t = _parse_record_str(disp)
+            gp_rec_disp = max(gp_rec_disp, w + l + t)
 
-        # heuristic matches
-        if pf == 0 and (lname in {"pf", "points_for", "overallpointsfor"} or ("points" in lname and ("for" in lname or "scored" in lname)) or abbr.upper() == "PF"):
-            pf = _to_int(val_num, 0)
-        if pa == 0 and (lname in {"pa", "points_against", "overallpointsagainst"} or ("points" in lname and ("against" in lname or "allowed" in lname)) or abbr.upper() == "PA"):
-            pa = _to_int(val_num, 0)
+    return pf, pa, gp_direct, wins, losses, ties, gp_rec_disp
 
-    return pf, pa, g, wins, losses, ties
-
-def _extract_overall_from_records_block(block: Dict[str, Any]) -> Tuple[int, int, int, int]:
+def _extract_from_records_block(block: Dict[str,Any]) -> Tuple[int,int,int,int]:
     """
-    Handle one 'record' or one element of 'records'.
-    Return (G,W,L,T) if it looks like an overall/total record.
+    From a single record object -> (gp, w, l, t)
+    Considers 'summary' and nested 'stats' names/abbreviations.
     """
-    g = w = l = t = 0
-    rtype = (block.get("type") or block.get("name") or "").lower()
-    if rtype not in {"overall", "total", ""}:  # some feeds omit type
-        # Not overall; skip but still parse summary if present just in case
-        pass
+    gp = w = l = t = 0
 
-    # summary like "10-3"
-    w2, l2, t2 = _parse_record_summary(block.get("summary") or "")
-    w = max(w, w2)
-    l = max(l, l2)
-    t = max(t, t2)
+    # "summary": "10-2" etc.
+    w2,l2,t2 = _parse_record_str(block.get("summary") or "")
+    w = max(w, w2); l = max(l, l2); t = max(t, t2)
 
-    # nested stats
     for s in block.get("stats", []) or []:
         name = (s.get("name") or "").lower()
         abbr = (s.get("abbreviation") or "")
         raw_val = s.get("value")
         if raw_val in (None, "", "-", "—"):
             raw_val = s.get("displayValue")
-        val_num = _safe_num(raw_val)
+        v = _num(raw_val)
 
-        if _looks(name, abbr, ["wins", "w"]):
-            w = max(w, _to_int(val_num, 0))
-        elif _looks(name, abbr, ["losses", "l"]):
-            l = max(l, _to_int(val_num, 0))
-        elif _looks(name, abbr, ["ties", "t"]):
-            t = max(t, _to_int(val_num, 0))
-        elif _looks(name, abbr, ["gamesplayed", "games", "gp"]):
-            g = max(g, _to_int(val_num, 0))
+        if _looks(name, abbr, "wins", "w"):
+            w = max(w, _to_int(v, 0))
+        elif _looks(name, abbr, "losses", "l"):
+            l = max(l, _to_int(v, 0))
+        elif _looks(name, abbr, "ties", "t"):
+            t = max(t, _to_int(v, 0))
+        elif _looks(name, abbr, "gamesplayed", "games", "gp"):
+            gp = max(gp, _to_int(v, 0))
 
-    if g == 0:
-        g = w + l + t
-    return g, w, l, t
+        # Some feeds put record-like strings in displayValue here, too
+        disp = s.get("displayValue")
+        if isinstance(disp, str):
+            w3,l3,t3 = _parse_record_str(disp)
+            gp = max(gp, w3 + l3 + t3)
+            w = max(w, w3); l = max(l, l3); t = max(t, t3)
 
-def _extract_pf_pa_g(entry: Dict[str, Any]) -> Tuple[int, int, int]:
+    if gp == 0:
+        gp = w + l + t
+    return gp, w, l, t
+
+def _extract_pf_pa_g(entry: Dict[str,Any]) -> Tuple[int,int,int]:
     """
-    Combine 'stats' + ('record' or 'records') to get PF, PA, G.
+    Pull PF/PA/G from both 'stats' and 'record(s)' aggressively.
     """
-    pf, pa, g_stats, w_stats, l_stats, t_stats = _extract_pf_pa_g_from_stats(entry.get("stats", []) or [])
+    stats = entry.get("stats", []) or []
+    pf, pa, gp_direct, w_s, l_s, t_s, gp_from_disp = _extract_from_stats(stats)
 
-    g = g_stats
-    # Prefer records when stats don't include games
+    gp_candidates = [gp_direct, gp_from_disp]
+
     # singular 'record'
-    if g == 0 and isinstance(entry.get("record"), dict):
-        g1, w1, l1, t1 = _extract_overall_from_records_block(entry["record"])
-        g = max(g, g1)
-        # if wins/losses/ties present here but g still 0, use sum
-        if g == 0 and (w1 or l1 or t1):
-            g = w1 + l1 + t1
+    if isinstance(entry.get("record"), dict):
+        gp1, w1, l1, t1 = _extract_from_records_block(entry["record"])
+        gp_candidates.append(gp1)
+        # use W/L/T if they look better than stats
+        w_s = max(w_s, w1); l_s = max(l_s, l1); t_s = max(t_s, t1)
 
     # plural 'records'
-    if g == 0 and isinstance(entry.get("records"), list):
-        best_g = 0
+    if isinstance(entry.get("records"), list):
         for rec in entry["records"]:
-            g2, w2, l2, t2 = _extract_overall_from_records_block(rec)
-            best_g = max(best_g, g2 or (w2 + l2 + t2))
-        g = max(g, best_g)
+            gp2, w2, l2, t2 = _extract_from_records_block(rec)
+            gp_candidates.append(gp2)
+            w_s = max(w_s, w2); l_s = max(l_s, l2); t_s = max(t_s, t2)
 
-    # last fallback: wins/losses/ties we found in stats
-    if g == 0 and (w_stats or l_stats or t_stats):
-        g = w_stats + l_stats + t_stats
+    gp = max(gp_candidates) if gp_candidates else 0
+    if gp == 0 and (w_s or l_s or t_s):
+        gp = w_s + l_s + t_s
 
-    return _to_int(pf, 0), _to_int(pa, 0), _to_int(g, 0)
+    return _to_int(pf, 0), _to_int(pa, 0), _to_int(gp, 0)
 
 def _pick_better_row(existing: List[Any], incoming: List[Any]) -> List[Any]:
     """
-    Choose the better row between two entries of [name, G, PF, PA]:
-      1) Prefer higher G
-      2) Merge in non-zero PF/PA if existing are zero
+    Prefer higher G; otherwise merge in non-zero PF/PA.
     """
     if not existing:
         return incoming
@@ -229,22 +222,17 @@ def _pick_better_row(existing: List[Any], incoming: List[Any]) -> List[Any]:
     _,   g2, pf2, pa2 = incoming
     if g2 > g1:
         return [name, g2, pf2, pa2]
-    pf = pf1 if pf1 else pf2
-    pa = pa1 if pa1 else pa2
-    return [name, g1, pf, pa]
+    return [name, g1, pf1 or pf2, pa1 or pa2]
 
 # -----------------------------------------------------------------------------
-# ESPN parsing
+# Fetch + parse ESPN
 # -----------------------------------------------------------------------------
 def fetch_espn_standings(league: str) -> List[List[Any]]:
     logging.info(f"Fetching ESPN standings JSON for {league}...")
-    url = ESPN_URLS[league]
-    s = _http()
-    r = s.get(url, timeout=20)
+    r = _http().get(ESPN_URLS[league], timeout=20)
     r.raise_for_status()
     data = r.json()
 
-    # Dict keyed by display name; value is [name, G, PF, PA]
     team_rows: Dict[str, List[Any]] = {}
 
     def handle_entry(entry: Dict[str, Any]):
@@ -254,17 +242,17 @@ def fetch_espn_standings(league: str) -> List[List[Any]]:
             return
         pf, pa, g = _extract_pf_pa_g(entry)
         incoming = [name, g, pf, pa]
-        existing = team_rows.get(name)
-        best = _pick_better_row(existing, incoming) if existing else incoming
+        prev = team_rows.get(name)
+        best = _pick_better_row(prev, incoming) if prev else incoming
         team_rows[name] = best
         logging.info(str(best))
 
-    # Primary path: children[*].standings.entries[*]
+    # Primary path
     for child in data.get("children") or []:
         for entry in (child.get("standings") or {}).get("entries", []) or []:
             handle_entry(entry)
 
-    # Fallback: top-level standings.entries[*]
+    # Fallback
     if not team_rows:
         for entry in (data.get("standings") or {}).get("entries", []) or []:
             handle_entry(entry)
@@ -309,13 +297,12 @@ def update_google_sheet(league: str, rows: Iterable[Iterable[Any]]):
 # Runner
 # -----------------------------------------------------------------------------
 def run_scraper():
-    """Pull ESPN standings for each league and write to the corresponding tab."""
     summary: Dict[str, int] = {}
     for lg in ["MLB", "NBA", "NFL", "NCAAF"]:
         try:
-            data = fetch_espn_standings(lg)
-            summary[lg] = len(data)
-            update_google_sheet(lg, data)
+            rows = fetch_espn_standings(lg)
+            summary[lg] = len(rows)
+            update_google_sheet(lg, rows)
         except Exception as e:
             logging.exception(f"❌ {lg} scraping failed: {e}")
             summary[lg] = 0

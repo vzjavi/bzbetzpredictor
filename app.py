@@ -3,7 +3,7 @@ import logging
 import json
 import requests
 import pandas as pd
-from flask import Flask, render_template, request, session, jsonify
+from flask import Flask, render_template, request, session, jsonify, abort
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -169,11 +169,11 @@ def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
     today = datetime.now(LOCAL_TIMEZONE).date()
     season_map = {
-    "NBA": "2025-2026",
-    "MLB": "2025",
-    "NFL": "2025",
-    "NCAAF": "2025"
-}
+        "NBA": "2025-2026",
+        "MLB": "2025",
+        "NFL": "2025",
+        "NCAAF": "2025"
+    }
 
     season = season_map.get(league_name, "2024")
     url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
@@ -236,11 +236,10 @@ def predict_game_totals(league_name):
         global ncaaf_map
         schedule_teams = set()
         for g in games:
-            schedule_teams.add(g.get("home_team"))
-            schedule_teams.add(g.get("away_team"))
-        # Safety: remove None
+            # Use correct keys from TheSportsDB payload
+            schedule_teams.add(g.get("strHomeTeam"))
+            schedule_teams.add(g.get("strAwayTeam"))
         schedule_teams = {t for t in schedule_teams if t}
-        # Use current sheet team list to align stats_key if possible
         try:
             ncaaf_map = extend_mapping_with_schedule(schedule_teams, ncaaf_map, sheet_names=None)
             save_mapping(NCAAF_MAP_PATH, ncaaf_map)
@@ -253,7 +252,7 @@ def predict_game_totals(league_name):
     seen_matchups = set()
 
     def find_row(team_name):
-            # For NCAAF, resolve team -> stats_key before matching
+        # For NCAAF, resolve team -> stats_key before matching
         if league_name == "NCAAF":
             try:
                 _, stats_key = resolve_team(team_name, ncaaf_map)
@@ -321,8 +320,37 @@ def predict_game_totals(league_name):
 
     return predictions
 
+# -------------------- Admin endpoints for cron/ops ----------------------------
 
+def _check_admin_token():
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    got = request.headers.get("X-Admin-Token", "")
+    if not expected or got != expected:
+        abort(401)
 
+@app.post("/admin/daily")
+def admin_daily():
+    """
+    Trigger daily maintenance tasks (cron-safe).
+    Currently: run the ESPN scraper to refresh Sheets.
+    """
+    _check_admin_token()
+    summary = run_scraper()
+    return jsonify({"ok": True, "summary": summary, "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat()})
+
+# (Optional) GET variant for manual testing
+@app.get("/admin/daily")
+def admin_daily_get():
+    _check_admin_token()
+    summary = run_scraper()
+    return jsonify({"ok": True, "summary": summary, "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat()})
+
+# (Optional) health check
+@app.get("/admin/health")
+def admin_health():
+    return jsonify({"ok": True, "time": datetime.now(LOCAL_TIMEZONE).isoformat()})
+
+# -------------------- Web UI --------------------------------------------------
 
 @app.route("/")
 def index():
@@ -331,7 +359,6 @@ def index():
         sport_predictions = predict_game_totals(sport)
         logging.info(f"{sport} predictions: {len(sport_predictions)} games")
         all_predictions.extend(sport_predictions)
-
 
     all_predictions = sorted(all_predictions, key=lambda x: x.get("game_time") or datetime.max)
     return render_template("index.html", predictions=all_predictions, now=datetime.now(LOCAL_TIMEZONE))

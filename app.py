@@ -3,7 +3,7 @@ import logging
 import json
 import requests
 import pandas as pd
-from flask import Flask, render_template, request, session, jsonify, abort
+from flask import Flask, render_template, request, session, jsonify, abort, Response, send_from_directory
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -54,6 +54,7 @@ try:
 except FileNotFoundError:
     ncaaf_map = {}
 
+# Aliases primarily used for logo lookup (full name -> short nickname)
 TEAM_ALIASES = {
     "Philadelphia 76ers": "76ers",
     "Milwaukee Bucks": "Bucks",
@@ -117,83 +118,22 @@ TEAM_ALIASES = {
     "New York Yankees": "Yankees"
 }
 
-# ---------------------------------------------------------------------------
-# Extra helpers for better name matching (TheSportsDB -> your Sheets)
-# ---------------------------------------------------------------------------
-
-# MLB city-only names -> full franchise name (as they appear in your Sheet)
-MLB_CITY_TO_TEAM = {
-    "Detroit": "Detroit Tigers",
-    "St. Louis": "St. Louis Cardinals",
-    # Add more if TheSportsDB returns city-only names for other clubs
-    # "Tampa Bay": "Tampa Bay Rays",
-    # "San Diego": "San Diego Padres",
-}
-
-# NCAAF short/common names -> likely full Sheet rows
-NCAAF_NAME_EXPANSIONS = {
-    "Florida": ["Florida Gators"],
-    "Florida State": ["Florida State Seminoles"],
-    "Georgia": ["Georgia Bulldogs"],
-    "Georgia State": ["Georgia State Panthers"],
-    "Alabama": ["Alabama Crimson Tide"],
-    "Clemson": ["Clemson Tigers"],
-    "LSU": ["LSU Tigers", "Louisiana State Tigers", "Louisiana State"],
-    "Louisiana State": ["LSU Tigers", "Louisiana State Tigers", "Louisiana State"],
-    "Louisiana": ["Louisiana Ragin' Cajuns", "Louisiana-Lafayette Ragin' Cajuns", "Louisiana-Lafayette"],
-    "Rice": ["Rice Owls"],
-    "UCLA": ["UCLA Bruins", "California-Los Angeles Bruins", "California-Los Angeles"],
-    "Utah": ["Utah Utes"],
-    "USC": ["USC Trojans", "Southern California Trojans", "Southern California"],
-    "Southern California": ["USC Trojans", "Southern California Trojans", "Southern California"],
-    "Arizona": ["Arizona Wildcats"],
-    "Hawaii": ["Hawaii Rainbow Warriors", "Hawai'i Rainbow Warriors", "Hawaii"],
-    "Hawai'i": ["Hawai'i Rainbow Warriors", "Hawaii Rainbow Warriors", "Hawaii"],
-    "Arizona State": ["Arizona State Sun Devils"],
-    "BYU": ["BYU Cougars", "Brigham Young Cougars", "Brigham Young"],
-    "Brigham Young": ["Brigham Young Cougars", "BYU Cougars", "Brigham Young"],
-    "Portland State": ["Portland State Vikings"],
-    "Penn State": ["Penn State Nittany Lions"],
-    "Michigan": ["Michigan Wolverines"],
-    "New Mexico": ["New Mexico Lobos"],
-    "Nevada": ["Nevada Wolf Pack"],
-    "Pittsburgh": ["Pittsburgh Panthers"],
-    "Duquesne": ["Duquesne Dukes"],
-    "Kansas State": ["Kansas State Wildcats"],
-    "North Dakota": ["North Dakota Fighting Hawks", "North Dakota"],
-    "Louisiana Tech": ["Louisiana Tech Bulldogs"],
-    "Southeastern Louisiana": ["Southeastern Louisiana Lions"],
-    "Utah State": ["Utah State Aggies"],
-    "UTEP": ["UTEP Miners", "Texas-El Paso Miners", "Texas-El Paso"],
-    "Western Kentucky": ["Western Kentucky Hilltoppers", "WKU"],
-    "North Alabama": ["North Alabama Lions"],
-    "Air Force": ["Air Force Falcons"],
-    "Bucknell": ["Bucknell Bison"],
-    "Arkansas State": ["Arkansas State Red Wolves"],
-    "Southeast Missouri State": ["Southeast Missouri State Redhawks", "SEMO Redhawks", "SEMO"],
-    "Memphis": ["Memphis Tigers"],
-    "Chattanooga": ["Chattanooga Mocs"],
-    "Massachusetts": ["Massachusetts Minutemen", "UMass Minutemen", "UMass"],
-    "UMass": ["UMass Minutemen", "Massachusetts Minutemen", "Massachusetts"],
-    "Temple": ["Temple Owls"],
-    "Texas": ["Texas Longhorns"],
-    "Texas State": ["Texas State Bobcats"],
-    "Eastern Michigan": ["Eastern Michigan Eagles"],
-    "Oregon State": ["Oregon State Beavers"],
-    "California": ["California Golden Bears", "Cal Golden Bears", "California"],
-    "Marshall": ["Marshall Thundering Herd"],
-    "Missouri State": ["Missouri State Bears"],
-    "LIU": ["LIU Sharks", "Long Island Sharks", "Long Island"],
-    "Long Island": ["Long Island Sharks", "LIU Sharks", "Long Island"],
-    "Ohio State": ["Ohio State Buckeyes"],
-    "Ole Miss": ["Mississippi Rebels", "Ole Miss Rebels", "Mississippi"],
-}
+# --- helper to normalize strings for fuzzy/substring matching
+def _canon(s: str) -> str:
+    # lower + keep only a-z0-9 for stable comparisons (handles Hawai'i, St. Louis, etc.)
+    return "".join(ch for ch in s.lower() if ch.isalnum())
 
 def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     """
     Loads Team, G, PF, PA from the Google Sheet tab (A1:D).
     Returns a DataFrame indexed by Team with numeric G/PF/PA.
     """
+    # ---- lightweight cache to avoid quota thrash ----
+    now = datetime.now(LOCAL_TIMEZONE)
+    cached = sheet_data_cache.get(league_tab)
+    if cached and (now - cached["ts"]).total_seconds() < 120:  # 2-minute TTL
+        return cached["df"]
+
     SHEET_ID = os.environ.get("GOOGLE_SHEETS_ID", "1ub_a9jetvc9BB6paGVIQ_0N_ETXLMEG43tD7zeE3Ljg")
     creds_path = os.environ.get(
         "GOOGLE_APPLICATION_CREDENTIALS",
@@ -202,20 +142,27 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     creds = Credentials.from_service_account_file(
         creds_path, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    # Prevent oauth2client file_cache warning
+    # Prevent file_cache warning
     service = build("sheets", "v4", credentials=creds, cache_discovery=False)
 
     rng = f"{league_tab}!A1:D1000"
-    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng).execute()
+    try:
+        res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng).execute()
+    except HttpError as e:
+        # If we're rate-limited but have a recent cache, serve that instead
+        if getattr(e, "resp", None) and getattr(e.resp, "status", None) == 429 and cached:
+            logging.warning("Sheets 429 for %s — serving cached copy", league_tab)
+            return cached["df"]
+        raise
     values = res.get("values", [])
 
     if not values or len(values) < 2:
-        return pd.DataFrame(columns=["G", "PF", "PA"], index=pd.Index([], name="Team"))
+        df = pd.DataFrame(columns=["G", "PF", "PA"], index=pd.Index([], name="Team"))
+        sheet_data_cache[league_tab] = {"df": df, "ts": now}
+        return df
 
     # Force header to exactly Team,G,PF,PA (ignore any extra columns in the sheet)
     expected = ["Team", "G", "PF", "PA"]
-    header = (values[0] + ["", "", "", ""])[:4]
-    # Normalize body rows to 4 elements
     rows = []
     for r in values[1:]:
         if isinstance(r, str):
@@ -235,6 +182,9 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
     df.set_index("Team", inplace=True)
+
+    # Write to cache
+    sheet_data_cache[league_tab] = {"df": df, "ts": now}
     return df
 
 
@@ -278,79 +228,50 @@ def get_todays_games(league_name):
 
 def find_team_match(team_name, team_list):
     """
-    Robustly map TheSportsDB names to your Sheet names.
-    Tries: direct match -> NBA/MLB alias maps -> reverse alias -> MLB city->team
-          -> NCAAF expansions -> prefix match ('School' -> 'School Mascots')
-          -> substring on first-two-words -> canonical fuzzy match.
+    Try to match API team names to the Google Sheet 'Team' values.
+    Strategy:
+      1) exact hit
+      2) alias dictionary (for logos)
+      3) fuzzy get_close_matches (cutoff=0.5)
+      4) canonical token containment match (handles 'Detroit' -> 'Detroit Tigers',
+         'St. Louis' -> 'St. Louis Cardinals', 'Hawai'i' -> 'Hawaii', etc.)
     """
-    import unicodedata
-
-    def _normalize_quotes(s: str) -> str:
-        # Normalize fancy quotes/accents, e.g. Hawai'i -> Hawaii
-        s = unicodedata.normalize("NFKD", s or "")
-        s = s.replace("’", "'").replace("ʻ", "'").replace("`", "'")
-        s = s.replace("'", "")         # remove apostrophes for canonical comparisons
-        s = s.replace(".", "")         # remove periods for things like "St. Louis"
-        return s.strip()
-
-    def _canon(s: str) -> str:
-        s = _normalize_quotes(s).lower()
-        return " ".join(s.split())
-
     team_name = (team_name or "").strip()
     if not team_name:
         return None
 
-    # 0) Direct exact hit
+    # 1) exact
     if team_name in team_list:
         return team_name
 
-    # 1) NBA/MLB alias map (full -> short)
+    # 2) alias => target (useful for some pro teams)
     if team_name in TEAM_ALIASES:
         alias_target = TEAM_ALIASES[team_name]
         if alias_target in team_list:
             return alias_target
 
-    # 1b) Reverse alias (short -> full) if Sheet uses full names
-    for full, short in TEAM_ALIASES.items():
-        if team_name == short and full in team_list:
-            return full
+    # 3) fuzzy
+    matches = get_close_matches(team_name, team_list, n=1, cutoff=0.5)
+    if matches:
+        return matches[0]
 
-    # 2) MLB city -> full franchise name
-    if team_name in MLB_CITY_TO_TEAM:
-        expanded = MLB_CITY_TO_TEAM[team_name]
-        if expanded in team_list:
-            return expanded
-
-    # 3) NCAAF common expansions (short/common -> full Sheet row)
-    if team_name in NCAAF_NAME_EXPANSIONS:
-        for candidate in NCAAF_NAME_EXPANSIONS[team_name]:
-            if candidate in team_list:
-                return candidate
-
-    # 4) Prefix match: if a Sheet row starts with the school name + space
-    #    e.g., "Florida" -> "Florida Gators"
-    tn_norm = _canon(team_name)
-    pref_hits = []
-    for t in team_list:
-        if _canon(t).startswith(tn_norm + " "):
-            pref_hits.append(t)
-    if pref_hits:
-        return sorted(pref_hits, key=len)[0]  # shortest usually best
-
-    # 5) Substring match within first two words (helps "Southern California Trojans")
-    for t in team_list:
-        ct = _canon(t)
-        first_two = " ".join(ct.split()[:2])
-        if tn_norm == first_two or tn_norm in first_two:
-            return t
-
-    # 6) Canonical fuzzy match
-    canon_index = {_canon(t): t for t in team_list}
-    candidates = list(canon_index.keys())
-    match_keys = get_close_matches(tn_norm, candidates, n=1, cutoff=0.78)
-    if match_keys:
-        return canon_index[match_keys[0]]
+    # 4) canonical containment (robust to punctuation/accents)
+    tcanon = _canon(team_name)
+    if not tcanon:
+        return None
+    best = None
+    best_len = 0
+    for cand in team_list:
+        ccanon = _canon(cand)
+        if tcanon == ccanon:
+            return cand
+        # If one is a prefix/substring of the other, prefer the longer (more specific) candidate
+        if tcanon in ccanon or ccanon in tcanon:
+            if len(ccanon) > best_len:
+                best = cand
+                best_len = len(ccanon)
+    if best:
+        return best
 
     logging.warning(f"⚠️ No match found for team: {team_name}")
     return None
@@ -377,6 +298,7 @@ def predict_game_totals(league_name):
         global ncaaf_map
         schedule_teams = set()
         for g in games:
+            # Use correct keys from TheSportsDB payload
             schedule_teams.add(g.get("strHomeTeam"))
             schedule_teams.add(g.get("strAwayTeam"))
         schedule_teams = {t for t in schedule_teams if t}
@@ -392,7 +314,7 @@ def predict_game_totals(league_name):
     seen_matchups = set()
 
     def find_row(team_name):
-        # For NCAAF, resolve team -> stats_key before matching (still keep your helper in play)
+        # For NCAAF, resolve team -> stats_key before matching
         if league_name == "NCAAF":
             try:
                 _, stats_key = resolve_team(team_name, ncaaf_map)
@@ -492,8 +414,12 @@ def admin_health():
 
 # -------------------- Web UI --------------------------------------------------
 
-@app.route("/")
+@app.route("/", methods=["GET", "HEAD"])
 def index():
+    # Health checkers often use HEAD. Make it a no-op to avoid Sheets quota hits.
+    if request.method == "HEAD":
+        return "", 200
+
     all_predictions = []
     for sport in ["NBA", "MLB", "NFL", "NCAAF"]:
         sport_predictions = predict_game_totals(sport)
@@ -510,7 +436,6 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
 
 # --- Minimal robots.txt and favicon routes ---
-from flask import Response, send_from_directory
 
 @app.route("/robots.txt")
 def robots_txt():

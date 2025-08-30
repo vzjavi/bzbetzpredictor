@@ -130,7 +130,8 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     creds = Credentials.from_service_account_file(
         creds_path, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    service = build("sheets", "v4", credentials=creds)
+    # ADD cache_discovery=False to prevent the oauth2client file_cache warning
+    service = build("sheets", "v4", credentials=creds, cache_discovery=False)
 
     rng = f"{league_tab}!A1:D1000"
     res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng).execute()
@@ -368,3 +369,14 @@ if __name__ == "__main__":
     print("📊 Running ESPN scraper manually on startup...")
     run_scraper()
     app.run(host="0.0.0.0", port=5000)
+
+# --- Minimal robots.txt and favicon routes ---
+from flask import Response, send_from_directory
+
+@app.route("/robots.txt")
+def robots_txt():
+    return Response("User-agent: *\nDisallow:", mimetype="text/plain")
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory("static", "favicon.ico", mimetype="image/x-icon")

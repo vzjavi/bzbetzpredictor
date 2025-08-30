@@ -117,6 +117,41 @@ TEAM_ALIASES = {
     "New York Yankees": "Yankees"
 }
 
+# --- Name matching helpers (strip mascots / normalize for college teams) ---
+import re as _re
+
+_MULTIWORD_MASCOTS = [
+    "Crimson Tide", "Nittany Lions", "Fighting Irish", "Fighting Illini",
+    "Golden Bears", "Golden Eagles", "Rainbow Warriors", "Thundering Herd",
+    "Ragin' Cajuns", "Demon Deacons", "Red Raiders", "Mean Green",
+    "Sun Devils", "Tar Heels", "Blue Devils", "Gamecocks", "Horned Frogs"
+]
+_SINGLEWORD_MASCOTS = {
+    "Wildcats","Owls","Minutemen","Gators","Seminoles","Longhorns","Rams",
+    "Cardinals","Rebels","Lobos","Bruins","Utes","Huskies","Beavers","Aztecs",
+    "Aggies","Tigers","Bulldogs","Jayhawks","Pack","Bears","Dukes","Vikings",
+    "Bison","Lions","Sharks","Mocs","Raiders","Herd","Eagles","Warhawks",
+    "Falcons","Cougars","Hurricanes","Spartans","Scarlet","Knights"
+}
+_WS_RE = _re.compile(r"\s+")
+def _strip_mascot_suffix(name: str) -> str:
+    """Remove trailing mascot words (e.g., 'Kansas State Wildcats' -> 'Kansas State')."""
+    s = (name or "").strip()
+    if not s:
+        return s
+    for phrase in _MULTIWORD_MASCOTS:           # try phrases first
+        if s.endswith(" " + phrase):
+            return s[: -len(phrase) - 1]
+    parts = s.split()                            # then single words
+    if len(parts) >= 2 and parts[-1] in _SINGLEWORD_MASCOTS:
+        return " ".join(parts[:-1])
+    return s
+
+def _canon(s: str) -> str:
+    s = (s or "").lower().strip()
+    s = _WS_RE.sub(" ", s)
+    return " ".join(s.split())
+
 def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     """
     Loads Team, G, PF, PA from the Google Sheet tab (A1:D).
@@ -204,16 +239,44 @@ def get_todays_games(league_name):
         return []
 
 def find_team_match(team_name, team_list):
-    team_name = team_name.strip()
+    # 0) Fast exits
+    team_name = (team_name or "").strip()
+    if not team_name:
+        return None
     if team_name in team_list:
         return team_name
+
+    # 1) Alias map (full -> short)
     if team_name in TEAM_ALIASES:
         alias_target = TEAM_ALIASES[team_name]
         if alias_target in team_list:
             return alias_target
-    matches = get_close_matches(team_name, team_list, n=1, cutoff=0.5)
-    if matches:
-        return matches[0]
+    # 1b) Reverse alias (short -> full) if your sheet uses full names
+    for full, short in TEAM_ALIASES.items():
+        if team_name == short and full in team_list:
+            return full
+
+    # 2) Strip mascot suffixes (NCAAF: 'Massachusetts Minutemen' -> 'Massachusetts')
+    stripped = _strip_mascot_suffix(team_name)
+    if stripped in team_list:
+        return stripped
+
+    # 3) Canonical exact match (case/space tolerant)
+    canon_index = {_canon(t): t for t in team_list}
+    c_stripped = _canon(stripped)
+    if c_stripped in canon_index:
+        return canon_index[c_stripped]
+
+    # 4) Fuzzy on canonical forms
+    probes = [_canon(team_name), c_stripped]
+    candidates = list(canon_index.keys())
+    for probe in probes:
+        if not probe:
+            continue
+        match_keys = get_close_matches(probe, candidates, n=1, cutoff=0.82)
+        if match_keys:
+            return canon_index[match_keys[0]]
+
     logging.warning(f"⚠️ No match found for team: {team_name}")
     return None
 
@@ -253,6 +316,9 @@ def predict_game_totals(league_name):
     seen_matchups = set()
 
     def find_row(team_name):
+        # NEW: normalize obvious suffixes first so NCAAF/others benefit
+        team_name = _strip_mascot_suffix(team_name)
+
         # For NCAAF, resolve team -> stats_key before matching
         if league_name == "NCAAF":
             try:

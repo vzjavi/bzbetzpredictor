@@ -117,40 +117,77 @@ TEAM_ALIASES = {
     "New York Yankees": "Yankees"
 }
 
-# --- Name matching helpers (strip mascots / normalize for college teams) ---
-import re as _re
+# ---------------------------------------------------------------------------
+# Extra helpers for better name matching (TheSportsDB -> your Sheets)
+# ---------------------------------------------------------------------------
 
-_MULTIWORD_MASCOTS = [
-    "Crimson Tide", "Nittany Lions", "Fighting Irish", "Fighting Illini",
-    "Golden Bears", "Golden Eagles", "Rainbow Warriors", "Thundering Herd",
-    "Ragin' Cajuns", "Demon Deacons", "Red Raiders", "Mean Green",
-    "Sun Devils", "Tar Heels", "Blue Devils", "Gamecocks", "Horned Frogs"
-]
-_SINGLEWORD_MASCOTS = {
-    "Wildcats","Owls","Minutemen","Gators","Seminoles","Longhorns","Rams",
-    "Cardinals","Rebels","Lobos","Bruins","Utes","Huskies","Beavers","Aztecs",
-    "Aggies","Tigers","Bulldogs","Jayhawks","Pack","Bears","Dukes","Vikings",
-    "Bison","Lions","Sharks","Mocs","Raiders","Herd","Eagles","Warhawks",
-    "Falcons","Cougars","Hurricanes","Spartans","Scarlet","Knights"
+# MLB city-only names -> full franchise name (as they appear in your Sheet)
+MLB_CITY_TO_TEAM = {
+    "Detroit": "Detroit Tigers",
+    "St. Louis": "St. Louis Cardinals",
+    # Add more if TheSportsDB returns city-only names for other clubs
+    # "Tampa Bay": "Tampa Bay Rays",
+    # "San Diego": "San Diego Padres",
 }
-_WS_RE = _re.compile(r"\s+")
-def _strip_mascot_suffix(name: str) -> str:
-    """Remove trailing mascot words (e.g., 'Kansas State Wildcats' -> 'Kansas State')."""
-    s = (name or "").strip()
-    if not s:
-        return s
-    for phrase in _MULTIWORD_MASCOTS:           # try phrases first
-        if s.endswith(" " + phrase):
-            return s[: -len(phrase) - 1]
-    parts = s.split()                            # then single words
-    if len(parts) >= 2 and parts[-1] in _SINGLEWORD_MASCOTS:
-        return " ".join(parts[:-1])
-    return s
 
-def _canon(s: str) -> str:
-    s = (s or "").lower().strip()
-    s = _WS_RE.sub(" ", s)
-    return " ".join(s.split())
+# NCAAF short/common names -> likely full Sheet rows
+NCAAF_NAME_EXPANSIONS = {
+    "Florida": ["Florida Gators"],
+    "Florida State": ["Florida State Seminoles"],
+    "Georgia": ["Georgia Bulldogs"],
+    "Georgia State": ["Georgia State Panthers"],
+    "Alabama": ["Alabama Crimson Tide"],
+    "Clemson": ["Clemson Tigers"],
+    "LSU": ["LSU Tigers", "Louisiana State Tigers", "Louisiana State"],
+    "Louisiana State": ["LSU Tigers", "Louisiana State Tigers", "Louisiana State"],
+    "Louisiana": ["Louisiana Ragin' Cajuns", "Louisiana-Lafayette Ragin' Cajuns", "Louisiana-Lafayette"],
+    "Rice": ["Rice Owls"],
+    "UCLA": ["UCLA Bruins", "California-Los Angeles Bruins", "California-Los Angeles"],
+    "Utah": ["Utah Utes"],
+    "USC": ["USC Trojans", "Southern California Trojans", "Southern California"],
+    "Southern California": ["USC Trojans", "Southern California Trojans", "Southern California"],
+    "Arizona": ["Arizona Wildcats"],
+    "Hawaii": ["Hawaii Rainbow Warriors", "Hawai'i Rainbow Warriors", "Hawaii"],
+    "Hawai'i": ["Hawai'i Rainbow Warriors", "Hawaii Rainbow Warriors", "Hawaii"],
+    "Arizona State": ["Arizona State Sun Devils"],
+    "BYU": ["BYU Cougars", "Brigham Young Cougars", "Brigham Young"],
+    "Brigham Young": ["Brigham Young Cougars", "BYU Cougars", "Brigham Young"],
+    "Portland State": ["Portland State Vikings"],
+    "Penn State": ["Penn State Nittany Lions"],
+    "Michigan": ["Michigan Wolverines"],
+    "New Mexico": ["New Mexico Lobos"],
+    "Nevada": ["Nevada Wolf Pack"],
+    "Pittsburgh": ["Pittsburgh Panthers"],
+    "Duquesne": ["Duquesne Dukes"],
+    "Kansas State": ["Kansas State Wildcats"],
+    "North Dakota": ["North Dakota Fighting Hawks", "North Dakota"],
+    "Louisiana Tech": ["Louisiana Tech Bulldogs"],
+    "Southeastern Louisiana": ["Southeastern Louisiana Lions"],
+    "Utah State": ["Utah State Aggies"],
+    "UTEP": ["UTEP Miners", "Texas-El Paso Miners", "Texas-El Paso"],
+    "Western Kentucky": ["Western Kentucky Hilltoppers", "WKU"],
+    "North Alabama": ["North Alabama Lions"],
+    "Air Force": ["Air Force Falcons"],
+    "Bucknell": ["Bucknell Bison"],
+    "Arkansas State": ["Arkansas State Red Wolves"],
+    "Southeast Missouri State": ["Southeast Missouri State Redhawks", "SEMO Redhawks", "SEMO"],
+    "Memphis": ["Memphis Tigers"],
+    "Chattanooga": ["Chattanooga Mocs"],
+    "Massachusetts": ["Massachusetts Minutemen", "UMass Minutemen", "UMass"],
+    "UMass": ["UMass Minutemen", "Massachusetts Minutemen", "Massachusetts"],
+    "Temple": ["Temple Owls"],
+    "Texas": ["Texas Longhorns"],
+    "Texas State": ["Texas State Bobcats"],
+    "Eastern Michigan": ["Eastern Michigan Eagles"],
+    "Oregon State": ["Oregon State Beavers"],
+    "California": ["California Golden Bears", "Cal Golden Bears", "California"],
+    "Marshall": ["Marshall Thundering Herd"],
+    "Missouri State": ["Missouri State Bears"],
+    "LIU": ["LIU Sharks", "Long Island Sharks", "Long Island"],
+    "Long Island": ["Long Island Sharks", "LIU Sharks", "Long Island"],
+    "Ohio State": ["Ohio State Buckeyes"],
+    "Ole Miss": ["Mississippi Rebels", "Ole Miss Rebels", "Mississippi"],
+}
 
 def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     """
@@ -165,7 +202,7 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     creds = Credentials.from_service_account_file(
         creds_path, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    # ADD cache_discovery=False to prevent the oauth2client file_cache warning
+    # Prevent oauth2client file_cache warning
     service = build("sheets", "v4", credentials=creds, cache_discovery=False)
 
     rng = f"{league_tab}!A1:D1000"
@@ -238,47 +275,86 @@ def get_todays_games(league_name):
         logging.error(f"Error fetching {league_name} season games: {e}")
         return []
 
+
 def find_team_match(team_name, team_list):
-    # 0) Fast exits
+    """
+    Robustly map TheSportsDB names to your Sheet names.
+    Tries: direct match -> NBA/MLB alias maps -> reverse alias -> MLB city->team
+          -> NCAAF expansions -> prefix match ('School' -> 'School Mascots')
+          -> substring on first-two-words -> canonical fuzzy match.
+    """
+    import unicodedata
+
+    def _normalize_quotes(s: str) -> str:
+        # Normalize fancy quotes/accents, e.g. Hawai'i -> Hawaii
+        s = unicodedata.normalize("NFKD", s or "")
+        s = s.replace("’", "'").replace("ʻ", "'").replace("`", "'")
+        s = s.replace("'", "")         # remove apostrophes for canonical comparisons
+        s = s.replace(".", "")         # remove periods for things like "St. Louis"
+        return s.strip()
+
+    def _canon(s: str) -> str:
+        s = _normalize_quotes(s).lower()
+        return " ".join(s.split())
+
     team_name = (team_name or "").strip()
     if not team_name:
         return None
+
+    # 0) Direct exact hit
     if team_name in team_list:
         return team_name
 
-    # 1) Alias map (full -> short)
+    # 1) NBA/MLB alias map (full -> short)
     if team_name in TEAM_ALIASES:
         alias_target = TEAM_ALIASES[team_name]
         if alias_target in team_list:
             return alias_target
-    # 1b) Reverse alias (short -> full) if your sheet uses full names
+
+    # 1b) Reverse alias (short -> full) if Sheet uses full names
     for full, short in TEAM_ALIASES.items():
         if team_name == short and full in team_list:
             return full
 
-    # 2) Strip mascot suffixes (NCAAF: 'Massachusetts Minutemen' -> 'Massachusetts')
-    stripped = _strip_mascot_suffix(team_name)
-    if stripped in team_list:
-        return stripped
+    # 2) MLB city -> full franchise name
+    if team_name in MLB_CITY_TO_TEAM:
+        expanded = MLB_CITY_TO_TEAM[team_name]
+        if expanded in team_list:
+            return expanded
 
-    # 3) Canonical exact match (case/space tolerant)
+    # 3) NCAAF common expansions (short/common -> full Sheet row)
+    if team_name in NCAAF_NAME_EXPANSIONS:
+        for candidate in NCAAF_NAME_EXPANSIONS[team_name]:
+            if candidate in team_list:
+                return candidate
+
+    # 4) Prefix match: if a Sheet row starts with the school name + space
+    #    e.g., "Florida" -> "Florida Gators"
+    tn_norm = _canon(team_name)
+    pref_hits = []
+    for t in team_list:
+        if _canon(t).startswith(tn_norm + " "):
+            pref_hits.append(t)
+    if pref_hits:
+        return sorted(pref_hits, key=len)[0]  # shortest usually best
+
+    # 5) Substring match within first two words (helps "Southern California Trojans")
+    for t in team_list:
+        ct = _canon(t)
+        first_two = " ".join(ct.split()[:2])
+        if tn_norm == first_two or tn_norm in first_two:
+            return t
+
+    # 6) Canonical fuzzy match
     canon_index = {_canon(t): t for t in team_list}
-    c_stripped = _canon(stripped)
-    if c_stripped in canon_index:
-        return canon_index[c_stripped]
-
-    # 4) Fuzzy on canonical forms
-    probes = [_canon(team_name), c_stripped]
     candidates = list(canon_index.keys())
-    for probe in probes:
-        if not probe:
-            continue
-        match_keys = get_close_matches(probe, candidates, n=1, cutoff=0.82)
-        if match_keys:
-            return canon_index[match_keys[0]]
+    match_keys = get_close_matches(tn_norm, candidates, n=1, cutoff=0.78)
+    if match_keys:
+        return canon_index[match_keys[0]]
 
     logging.warning(f"⚠️ No match found for team: {team_name}")
     return None
+
 
 def get_team_logo(team_short_name, sport):
     full_name = next((k for k, v in TEAM_ALIASES.items() if v == team_short_name), team_short_name)
@@ -287,6 +363,7 @@ def get_team_logo(team_short_name, sport):
     except Exception as e:
         logging.warning(f"Logo lookup failed for {team_short_name}: {e}")
         return None
+
 
 def predict_game_totals(league_name):
     predictions = []
@@ -300,7 +377,6 @@ def predict_game_totals(league_name):
         global ncaaf_map
         schedule_teams = set()
         for g in games:
-            # Use correct keys from TheSportsDB payload
             schedule_teams.add(g.get("strHomeTeam"))
             schedule_teams.add(g.get("strAwayTeam"))
         schedule_teams = {t for t in schedule_teams if t}
@@ -316,10 +392,7 @@ def predict_game_totals(league_name):
     seen_matchups = set()
 
     def find_row(team_name):
-        # NEW: normalize obvious suffixes first so NCAAF/others benefit
-        team_name = _strip_mascot_suffix(team_name)
-
-        # For NCAAF, resolve team -> stats_key before matching
+        # For NCAAF, resolve team -> stats_key before matching (still keep your helper in play)
         if league_name == "NCAAF":
             try:
                 _, stats_key = resolve_team(team_name, ncaaf_map)

@@ -94,20 +94,5 @@
     "aliases": ["Marshall Thundering Herd"],
     "stats_key": "Marshall",
     "PF": null, "PA": null, "PPG": null
-  },
-
-  "Southern California": { "aliases": ["USC", "USC Trojans"], "stats_key": "Southern California", "PF": null, "PA": null, "PPG": null },
-  "Louisiana State": { "aliases": ["LSU", "LSU Tigers"], "stats_key": "Louisiana State", "PF": null, "PA": null, "PPG": null },
-  "Brigham Young": { "aliases": ["BYU", "BYU Cougars"], "stats_key": "Brigham Young", "PF": null, "PA": null, "PPG": null },
-  "Massachusetts": { "aliases": ["UMass", "UMass Minutemen"], "stats_key": "Massachusetts", "PF": null, "PA": null, "PPG": null },
-  "Hawai'i": { "aliases": ["Hawaii", "Hawaii Rainbow Warriors", "Hawai'i Rainbow Warriors"], "stats_key": "Hawai'i", "PF": null, "PA": null, "PPG": null },
-  "LIU": { "aliases": ["Long Island", "LIU Sharks"], "stats_key": "LIU", "PF": null, "PA": null, "PPG": null },
-  "Duquesne": { "aliases": ["Duquesne Dukes"], "stats_key": "Duquesne", "PF": null, "PA": null, "PPG": null },
-  "Chattanooga": { "aliases": ["Chattanooga Mocs", "Tennessee-Chattanooga"], "stats_key": "Chattanooga", "PF": null, "PA": null, "PPG": null },
-  "North Alabama": { "aliases": ["UNA", "North Alabama Lions"], "stats_key": "North Alabama", "PF": null, "PA": null, "PPG": null },
-  "Bucknell": { "aliases": ["Bucknell Bison"], "stats_key": "Bucknell", "PF": null, "PA": null, "PPG": null },
-  "Portland State": { "aliases": ["Portland St", "Portland State Vikings"], "stats_key": "Portland State", "PF": null, "PA": null, "PPG": null },
-  "Missouri State": { "aliases": ["Missouri St", "Missouri State Bears"], "stats_key": "Missouri State", "PF": null, "PA": null, "PPG": null },
-  "Marshall": { "aliases": ["Marshall Thundering Herd"], "stats_key": "Marshall", "PF": null, "PA": null, "PPG": null }
-
+  }
 }

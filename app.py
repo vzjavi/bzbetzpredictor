@@ -261,40 +261,102 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
 
 def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
-    today = datetime.now(LOCAL_TIMEZONE).date()
+    today_local = datetime.now(LOCAL_TIMEZONE).date()
     season_map = {
         "NBA": "2025-2026",
         "MLB": "2025",
         "NFL": "2025",
-        "NCAAF": "2025"
+        "NCAAF": "2025",
     }
-
     season = season_map.get(league_name, "2024")
+
+    # --- 1) Primary: TheSportsDB (same as before) ---------------------------
     url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
+    sportsdb_games = []
     try:
-        response = requests.get(url)
-        data = response.json()
-        raw_events = data.get("events")
-        if raw_events is None:
-            logging.warning(f"No events returned from API for {league_name} — check season and league ID")
-            raw_events = []
+        r = requests.get(url, timeout=20)
+        data = r.json()
+        raw_events = data.get("events") or []
 
         def is_game_today(game):
             if not game.get("dateEvent") or not game.get("strTime"):
                 return False
             dt_str = f"{game['dateEvent']} {game['strTime']}"
             try:
+                # SportsDB times are UTC
                 game_dt_utc = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
-                game_dt_cst = game_dt_utc.astimezone(LOCAL_TIMEZONE)
-                return game_dt_cst.date() == today
-            except Exception as e:
-                logging.warning(f"Could not parse game datetime: {dt_str}, error: {e}")
+                return game_dt_utc.astimezone(LOCAL_TIMEZONE).date() == today_local
+            except Exception:
                 return False
 
-        return [game for game in raw_events if is_game_today(game)]
+        sportsdb_games = [g for g in raw_events if is_game_today(g)]
     except Exception as e:
-        logging.error(f"Error fetching {league_name} season games: {e}")
-        return []
+        logging.warning(f"SportsDB error for {league_name}: {e}")
+
+    logging.info(f"{league_name} SportsDB games for today: "
+                 f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in sportsdb_games]}")
+
+    # --- 2) Fallback: ESPN scoreboard (NCAAF only) --------------------------
+    # ESPN endpoint: https://site.api.espn.com/apis/v2/sports/football/college-football/scoreboard?dates=YYYYMMDD
+    # We only add games that SportsDB didn't return.
+    if league_name == "NCAAF":
+        try:
+            ymd = today_local.strftime("%Y%m%d")
+            espn_url = f"https://site.api.espn.com/apis/v2/sports/football/college-football/scoreboard?dates={ymd}"
+            er = requests.get(espn_url, timeout=20)
+            ejson = er.json()
+            espn_events = ejson.get("events", []) or []
+
+            espn_games = []
+            for ev in espn_events:
+                comps = (ev.get("competitions") or [])
+                if not comps:
+                    continue
+                comp = comps[0]
+                # ISO datetime (UTC)
+                iso_dt = comp.get("date")
+                try:
+                    game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
+                    dateEvent = game_dt_utc.date().isoformat()
+                    strTime = game_dt_utc.strftime("%H:%M:%S")  # keep UTC; we localize later
+                except Exception:
+                    continue
+
+                teams = comp.get("competitors") or []
+                home = next((t for t in teams if t.get("homeAway") == "home"), None)
+                away = next((t for t in teams if t.get("homeAway") == "away"), None)
+                if not home or not away:
+                    continue
+
+                # Use displayName (e.g., "South Carolina Gamecocks")
+                home_name = (home.get("team") or {}).get("displayName")
+                away_name = (away.get("team") or {}).get("displayName")
+                if not home_name or not away_name:
+                    continue
+
+                espn_games.append({
+                    "strHomeTeam": home_name,
+                    "strAwayTeam": away_name,
+                    "dateEvent": dateEvent,   # UTC date
+                    "strTime": strTime,       # UTC time
+                })
+
+            logging.info(f"NCAAF ESPN games for today: "
+                         f"{[(g['strAwayTeam'], g['strHomeTeam']) for g in espn_games]}")
+
+            # merge: keep SportsDB originals, add missing ESPN pairs
+            existing = {(g.get("strAwayTeam"), g.get("strHomeTeam")) for g in sportsdb_games}
+            for g in espn_games:
+                key = (g["strAwayTeam"], g["strHomeTeam"])
+                if key not in existing:
+                    sportsdb_games.append(g)
+                    existing.add(key)
+        except Exception as e:
+            logging.warning(f"ESPN fallback failed: {e}")
+
+    # Final list (SportsDB + any ESPN additions)
+    return sportsdb_games
+
 
 
 def find_team_match(team_name, team_list):

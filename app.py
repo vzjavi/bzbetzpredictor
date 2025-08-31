@@ -7,11 +7,12 @@ from flask import Flask, render_template, request, session, jsonify, abort, Resp
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import get_close_matches
 from espn_scraper import run_scraper
 import pytz
 from ncaaf_team_matching_helper import extend_mapping_with_schedule, resolve_team, save_mapping
+import re
 
 # Logging config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -43,7 +44,10 @@ SPORT_LEAGUES = {
     "NFL": "4391"
 }
 
-sheet_data_cache = {}
+# Simple cache for Sheets reads to avoid 429s (per-minute rate limit)
+sheet_data_cache = {}  # {league_tab: (fetched_at_datetime, DataFrame)}
+CACHE_TTL = timedelta(minutes=2)
+
 LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
 
 NCAAF_MAP_PATH = os.path.join(os.path.dirname(__file__), "ncaaf_team_mapping.json")
@@ -54,7 +58,7 @@ try:
 except FileNotFoundError:
     ncaaf_map = {}
 
-# Aliases primarily used for logo lookup (full name -> short nickname)
+# Aliases used for logo lookups (NBA / MLB here). College handled separately below.
 TEAM_ALIASES = {
     "Philadelphia 76ers": "76ers",
     "Milwaukee Bucks": "Bucks",
@@ -118,32 +122,93 @@ TEAM_ALIASES = {
     "New York Yankees": "Yankees"
 }
 
-# --- helper to normalize strings for fuzzy/substring matching
-def _canon(s: str) -> str:
-    # lower + keep only a-z0-9 for stable comparisons (handles Hawai'i, St. Louis, etc.)
-    return "".join(ch for ch in s.lower() if ch.isalnum())
+# ---- NCAAF name normalization helpers ---------------------------------------
 
-def _tokens(s: str):
-    # tokenization used for NCAAF safe matching
-    stop = {
-        "university", "college", "the", "of", "and", "at", "st", "saint",
-        "tech", "institute", "a&m", "am", "u", "univ", "state"
-    }
-    raw = "".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in s)
-    toks = [t for t in raw.split() if t and t not in stop]
-    # normalize hawai'i -> hawaii, etc.
-    return {t.replace("hawaii", "hawaii").replace("carolina", "carolina") for t in toks}
+# High-impact short names & variants -> school name as it likely appears in Sheets
+NCAAF_NAME_ALIASES = {
+    "USC": "Southern California",
+    "LSU": "Louisiana State",
+    "BYU": "Brigham Young",
+    "UMass": "Massachusetts",
+    "Ole Miss": "Mississippi",
+    "Cal": "California",
+    "Hawai'i": "Hawaii",
+    "Hawai‘i": "Hawaii",
+    "Arizona St": "Arizona State",
+    "Ohio St": "Ohio State",
+    "Penn St": "Penn State",
+    "Florida St": "Florida State",
+    "Kansas St": "Kansas State",
+    "Utah St": "Utah State",
+    "Colorado St": "Colorado State",
+    "LA Tech": "Louisiana Tech",
+    "SE Louisiana": "Southeastern Louisiana",
+    "SE Missouri State": "Southeast Missouri State",
+    "Long Island": "LIU",        # sometimes Sheets use LIU, sometimes "Long Island"
+    "LIU": "Long Island",
+}
+
+# scrubs punctuation & the “University of …” style noise
+def _normalize_college_name(name: str) -> str:
+    s = name.strip()
+    if s in NCAAF_NAME_ALIASES:
+        return NCAAF_NAME_ALIASES[s]
+
+    # Replace “&” variations and apostrophes
+    s = s.replace("&", "and")
+    s = s.replace("’", "'").replace("ʻ", "'").replace("`", "'")
+    s = s.replace("'", "")
+
+    # Drop common boilerplate
+    s = re.sub(r"^(University of|Univ\. of|Univ of)\s+", "", s, flags=re.I)
+    s = re.sub(r"\s+University$", "", s, flags=re.I)
+
+    # Expand “St.” to “State” and vice versa (for fuzzy attempts)
+    s = re.sub(r"\bSt\.?\b", "State", s, flags=re.I)
+
+    return s.strip()
+
+
+def _ncaaf_variants(name: str):
+    """Generate a few reasonable variants to try against the Sheet index."""
+    base = name.strip()
+    norm = _normalize_college_name(base)
+    variants = {base, norm}
+
+    # also try the alias mapping both ways if present
+    for k, v in NCAAF_NAME_ALIASES.items():
+        if base == k:
+            variants.add(v)
+        if base == v:
+            variants.add(k)
+
+    # if “State” present, try St, and if mascot attached, try without
+    if "State" in norm:
+        variants.add(norm.replace("State", "St"))
+    if "St " in norm:
+        variants.add(norm.replace("St", "State"))
+
+    # strip mascots (simple rule: remove last token if list is 3+ and looks like mascot)
+    tokens = norm.split()
+    if len(tokens) >= 3:
+        variants.add(" ".join(tokens[:2]))  # “Ohio State Buckeyes” -> “Ohio State”
+
+    return [v for v in variants if v]
+
 
 def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     """
     Loads Team, G, PF, PA from the Google Sheet tab (A1:D).
     Returns a DataFrame indexed by Team with numeric G/PF/PA.
+    Uses a small in-memory cache to respect Sheets API quotas.
     """
-    # ---- lightweight cache to avoid quota thrash ----
-    now = datetime.now(LOCAL_TIMEZONE)
+    # Cache check
+    now = datetime.utcnow()
     cached = sheet_data_cache.get(league_tab)
-    if cached and (now - cached["ts"]).total_seconds() < 120:  # 2-minute TTL
-        return cached["df"]
+    if cached:
+        fetched_at, df_cached = cached
+        if now - fetched_at < CACHE_TTL:
+            return df_cached.copy()
 
     SHEET_ID = os.environ.get("GOOGLE_SHEETS_ID", "1ub_a9jetvc9BB6paGVIQ_0N_ETXLMEG43tD7zeE3Ljg")
     creds_path = os.environ.get(
@@ -153,27 +218,22 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     creds = Credentials.from_service_account_file(
         creds_path, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    # Prevent file_cache warning
+    # ADD cache_discovery=False to prevent the oauth2client file_cache warning
     service = build("sheets", "v4", credentials=creds, cache_discovery=False)
 
     rng = f"{league_tab}!A1:D1000"
-    try:
-        res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng).execute()
-    except HttpError as e:
-        # If we're rate-limited but have a recent cache, serve that instead
-        if getattr(e, "resp", None) and getattr(e.resp, "status", None) == 429 and cached:
-            logging.warning("Sheets 429 for %s — serving cached copy", league_tab)
-            return cached["df"]
-        raise
+    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng).execute()
     values = res.get("values", [])
 
     if not values or len(values) < 2:
-        df = pd.DataFrame(columns=["G", "PF", "PA"], index=pd.Index([], name="Team"))
-        sheet_data_cache[league_tab] = {"df": df, "ts": now}
-        return df
+        df_empty = pd.DataFrame(columns=["G", "PF", "PA"], index=pd.Index([], name="Team"))
+        sheet_data_cache[league_tab] = (now, df_empty.copy())
+        return df_empty
 
     # Force header to exactly Team,G,PF,PA (ignore any extra columns in the sheet)
     expected = ["Team", "G", "PF", "PA"]
+    header = (values[0] + ["", "", "", ""])[:4]
+    # Normalize body rows to 4 elements
     rows = []
     for r in values[1:]:
         if isinstance(r, str):
@@ -194,8 +254,8 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
 
     df.set_index("Team", inplace=True)
 
-    # Write to cache
-    sheet_data_cache[league_tab] = {"df": df, "ts": now}
+    # Save to cache
+    sheet_data_cache[league_tab] = (now, df.copy())
     return df
 
 
@@ -237,125 +297,18 @@ def get_todays_games(league_name):
         return []
 
 
-def _build_city_to_short():
-    """Map city part to short nickname (e.g., 'Detroit' -> 'Tigers')."""
-    m = {}
-    for full, short in TEAM_ALIASES.items():
-        # city is everything before the last word (the mascot)
-        parts = full.split()
-        if len(parts) >= 2:
-            city = " ".join(parts[:-1])
-            m[city] = short
-    # hand-tune a couple variants commonly used by APIs
-    m["St Louis"] = m.get("St. Louis", "Cardinals")
-    m["LA"] = m.get("Los Angeles", None) or "Dodgers"
-    return m
-
-CITY_TO_SHORT = _build_city_to_short()
-
-def _safe_match_college(team_name: str, team_list):
-    """
-    Conservative matching for college names to avoid bad cross-matches.
-    1) exact
-    2) token subset: all tokens from input appear in candidate (after removing stopwords)
-       - requires at least 2 tokens OR a single token with length >= 6
-    3) high-threshold fuzzy (>0.86) as last resort
-    """
+def find_team_match(team_name, team_list):
+    team_name = team_name.strip()
     if team_name in team_list:
         return team_name
-
-    in_tok = _tokens(team_name)
-    if not in_tok:
-        return None
-
-    # token subset candidates
-    candidates = []
-    for cand in team_list:
-        c_tok = _tokens(cand)
-        if not c_tok:
-            continue
-        if len(in_tok) >= 2:
-            if in_tok.issubset(c_tok):
-                candidates.append((cand, len(c_tok)))
-        else:
-            # single token; require length and containment
-            t = next(iter(in_tok))
-            if len(t) >= 6 and t in c_tok:
-                candidates.append((cand, len(c_tok)))
-
-    if len(candidates) == 1:
-        return candidates[0][0]
-    elif len(candidates) > 1:
-        # prefer the most specific (more tokens)
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        # break ties by longest canonical string
-        best = max([c[0] for c in candidates], key=lambda s: len(_canon(s)))
-        return best
-
-    # cautious fuzzy only if very high similarity
-    match = get_close_matches(team_name, team_list, n=1, cutoff=0.86)
-    if match:
-        return match[0]
-    return None
-
-def find_team_match(team_name, team_list, league=None):
-    """
-    Try to match API team names to the Google Sheet 'Team' values.
-
-    Pro sports (NBA/MLB/NFL): allow alias + city-to-short + fuzzy/containment
-    College (NCAAF): strict token-based matching to prevent 'North Dakota' -> 'North Carolina' type errors.
-    """
-    team_name = (team_name or "").strip()
-    if not team_name:
-        return None
-
-    # League-specific conservative path for college
-    if league == "NCAAF":
-        m = _safe_match_college(team_name, team_list)
-        if m:
-            return m
-        logging.warning(f"⚠️ No match found for college team: {team_name}")
-        return None
-
-    # === Pro path ===
-    # 1) exact
-    if team_name in team_list:
-        return team_name
-
-    # 2) alias dictionary (full -> short)
     if team_name in TEAM_ALIASES:
         alias_target = TEAM_ALIASES[team_name]
         if alias_target in team_list:
             return alias_target
-
-    # 2b) city -> short nickname
-    if team_name in CITY_TO_SHORT:
-        short = CITY_TO_SHORT[team_name]
-        if short in team_list:
-            return short
-
-    # 3) fuzzy
+    # fuzzy
     matches = get_close_matches(team_name, team_list, n=1, cutoff=0.5)
     if matches:
         return matches[0]
-
-    # 4) canonical containment (robust to punctuation/accents)
-    tcanon = _canon(team_name)
-    if not tcanon:
-        return None
-    best = None
-    best_len = 0
-    for cand in team_list:
-        ccanon = _canon(cand)
-        if tcanon == ccanon:
-            return cand
-        if tcanon in ccanon or ccanon in tcanon:
-            if len(ccanon) > best_len:
-                best = cand
-                best_len = len(ccanon)
-    if best:
-        return best
-
     logging.warning(f"⚠️ No match found for team: {team_name}")
     return None
 
@@ -395,27 +348,7 @@ def predict_game_totals(league_name):
     team_list = stats_df.index.tolist()
     seen_matchups = set()
 
-    def find_row(team_name):
-        # For NCAAF, resolve team -> stats_key before matching
-        if league_name == "NCAAF":
-            try:
-                _, stats_key = resolve_team(team_name, ncaaf_map)
-                team_name_local = stats_key
-            except Exception as e:
-                logging.warning(f"NCAAF resolve failed for {team_name}: {e}")
-                team_name_local = team_name
-            match = find_team_match(team_name_local, team_list, league="NCAAF")
-        else:
-            match = find_team_match(team_name, team_list, league=league_name)
-
-        if not match:
-            return None, None
-        try:
-            return match, stats_df.loc[match]
-        except KeyError:
-            return None, None
-
-    def per_game(row):
+    def _per_game(row):
         try:
             g = float(row.get("G", 0)) or 0.0
             pf = float(row.get("PF", 0)) or 0.0
@@ -425,6 +358,49 @@ def predict_game_totals(league_name):
             return pf / g, pa / g
         except Exception:
             return 0.0, 0.0
+
+    def _find_row_ncaaf(raw_name):
+        """
+        Robust NCAAF matcher:
+        1) Try direct/fuzzy against Sheet with several normalized variants.
+        2) Then ask resolve_team(...) (now with sheet_names=team_list) and try its stats_key.
+        """
+        # (1) try raw + normalized variants straight against Sheet names
+        for cand in _ncaaf_variants(raw_name):
+            match = find_team_match(cand, team_list)
+            if match:
+                try:
+                    return match, stats_df.loc[match]
+                except KeyError:
+                    pass
+
+        # (2) fall back to mapping-based resolver (bias with sheet names)
+        try:
+            _, stats_key = resolve_team(raw_name, ncaaf_map, sheet_names=team_list)
+            if stats_key:
+                match = find_team_match(stats_key, team_list)
+                if match:
+                    try:
+                        return match, stats_df.loc[match]
+                    except KeyError:
+                        pass
+        except Exception as e:
+            logging.warning(f"NCAAF resolve failed for {raw_name}: {e}")
+
+        logging.warning(f"⚠️ No match found for college team: {raw_name}")
+        return None, None
+
+    def find_row(team_name):
+        if league_name == "NCAAF":
+            return _find_row_ncaaf(team_name)
+        # Non-college: use generic matching (handles MLB/NBA/NFL fine)
+        match = find_team_match(team_name, team_list)
+        if not match:
+            return None, None
+        try:
+            return match, stats_df.loc[match]
+        except KeyError:
+            return None, None
 
     for game in games:
         team_home = game.get("strHomeTeam")
@@ -452,8 +428,8 @@ def predict_game_totals(league_name):
             continue
         seen_matchups.add(matchup_key)
 
-        pfpg1, papg1 = per_game(row1)
-        pfpg2, papg2 = per_game(row2)
+        pfpg1, papg1 = _per_game(row1)
+        pfpg2, papg2 = _per_game(row2)
         predicted_total = round(((pfpg1 + papg1 + pfpg2 + papg2) / 2.0), 1)
 
         predictions.append({
@@ -500,12 +476,8 @@ def admin_health():
 
 # -------------------- Web UI --------------------------------------------------
 
-@app.route("/", methods=["GET", "HEAD"])
+@app.route("/")
 def index():
-    # Health checkers often use HEAD. Make it a no-op to avoid Sheets quota hits.
-    if request.method == "HEAD":
-        return "", 200
-
     all_predictions = []
     for sport in ["NBA", "MLB", "NFL", "NCAAF"]:
         sport_predictions = predict_game_totals(sport)
@@ -522,7 +494,6 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
 
 # --- Minimal robots.txt and favicon routes ---
-
 @app.route("/robots.txt")
 def robots_txt():
     return Response("User-agent: *\nDisallow:", mimetype="text/plain")

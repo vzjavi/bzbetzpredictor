@@ -368,13 +368,12 @@ def predict_game_totals(league_name):
         Try its stats_key and primary against the Sheet.
         2) If that fails, try direct/fuzzy against the Sheet with normalized variants.
         """
-
         # (1) resolver FIRST (lets Miami guardrail take effect)
         try:
             primary, stats_key = resolve_team(raw_name, ncaaf_map, sheet_names=team_list)
             logging.info(f"[NCAAF resolver] raw='{raw_name}' → primary='{primary}', stats_key='{stats_key}'")
             # Try stats_key first (that's how your Sheet is keyed), then primary
-            for cand in [stats_key, primary]:
+            for cand in (stats_key, primary):
                 if cand:
                     match = find_team_match(cand, team_list)
                     if match:
@@ -385,17 +384,18 @@ def predict_game_totals(league_name):
         except Exception as e:
             logging.warning(f"resolve_team failed for '{raw_name}': {e}")
 
-    # (2) fall back to raw + normalized variants straight against Sheet names
-    for cand in _ncaaf_variants(raw_name):
-        match = find_team_match(cand, team_list)
-        if match:
-            try:
-                return match, stats_df.loc[match]
-            except KeyError:
-                pass
+        # (2) fall back to raw + normalized variants straight against Sheet names
+        for cand in _ncaaf_variants(raw_name):
+            match = find_team_match(cand, team_list)
+            if match:
+                try:
+                    return match, stats_df.loc[match]
+                except KeyError:
+                    pass
 
-    logging.warning(f"⚠️ No match found for college team: {raw_name}")
-    return None, None
+        logging.warning(f"⚠️ No match found for college team: {raw_name}")
+        return None, None
+
 
 
     def find_row(team_name):

@@ -134,6 +134,23 @@ def resolve_team(
             return norm_primary, mapping[norm_primary].get("stats_key", norm_primary)
         return norm_primary, norm_primary
 
+    # --- Disambiguation guardrails for tricky names ---
+    low = team_name.lower()
+
+    # MIAMI: default to Florida unless explicitly Ohio
+    miami_is_ohio = any(x in low for x in [
+        "(oh", " ohio", "redhawks"  # e.g., "Miami (OH)", "Miami Ohio", "Miami RedHawks"
+    ])
+    if "miami" in low:
+        if miami_is_ohio:
+            prefer = "Miami (OH)"
+        else:
+            prefer = "Miami (FL)"
+        if prefer in mapping:
+            return prefer, mapping[prefer].get("stats_key", prefer)
+        return prefer, prefer
+    # --- end guardrails ---
+
     # Build canonical indexes
     canon_primary, canon_alias = _build_canonical_index(mapping)
     cn = canonicalize(team_name)

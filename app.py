@@ -123,6 +123,17 @@ def _canon(s: str) -> str:
     # lower + keep only a-z0-9 for stable comparisons (handles Hawai'i, St. Louis, etc.)
     return "".join(ch for ch in s.lower() if ch.isalnum())
 
+def _tokens(s: str):
+    # tokenization used for NCAAF safe matching
+    stop = {
+        "university", "college", "the", "of", "and", "at", "st", "saint",
+        "tech", "institute", "a&m", "am", "u", "univ", "state"
+    }
+    raw = "".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in s)
+    toks = [t for t in raw.split() if t and t not in stop]
+    # normalize hawai'i -> hawaii, etc.
+    return {t.replace("hawaii", "hawaii").replace("carolina", "carolina") for t in toks}
+
 def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     """
     Loads Team, G, PF, PA from the Google Sheet tab (A1:D).
@@ -226,29 +237,102 @@ def get_todays_games(league_name):
         return []
 
 
-def find_team_match(team_name, team_list):
+def _build_city_to_short():
+    """Map city part to short nickname (e.g., 'Detroit' -> 'Tigers')."""
+    m = {}
+    for full, short in TEAM_ALIASES.items():
+        # city is everything before the last word (the mascot)
+        parts = full.split()
+        if len(parts) >= 2:
+            city = " ".join(parts[:-1])
+            m[city] = short
+    # hand-tune a couple variants commonly used by APIs
+    m["St Louis"] = m.get("St. Louis", "Cardinals")
+    m["LA"] = m.get("Los Angeles", None) or "Dodgers"
+    return m
+
+CITY_TO_SHORT = _build_city_to_short()
+
+def _safe_match_college(team_name: str, team_list):
+    """
+    Conservative matching for college names to avoid bad cross-matches.
+    1) exact
+    2) token subset: all tokens from input appear in candidate (after removing stopwords)
+       - requires at least 2 tokens OR a single token with length >= 6
+    3) high-threshold fuzzy (>0.86) as last resort
+    """
+    if team_name in team_list:
+        return team_name
+
+    in_tok = _tokens(team_name)
+    if not in_tok:
+        return None
+
+    # token subset candidates
+    candidates = []
+    for cand in team_list:
+        c_tok = _tokens(cand)
+        if not c_tok:
+            continue
+        if len(in_tok) >= 2:
+            if in_tok.issubset(c_tok):
+                candidates.append((cand, len(c_tok)))
+        else:
+            # single token; require length and containment
+            t = next(iter(in_tok))
+            if len(t) >= 6 and t in c_tok:
+                candidates.append((cand, len(c_tok)))
+
+    if len(candidates) == 1:
+        return candidates[0][0]
+    elif len(candidates) > 1:
+        # prefer the most specific (more tokens)
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        # break ties by longest canonical string
+        best = max([c[0] for c in candidates], key=lambda s: len(_canon(s)))
+        return best
+
+    # cautious fuzzy only if very high similarity
+    match = get_close_matches(team_name, team_list, n=1, cutoff=0.86)
+    if match:
+        return match[0]
+    return None
+
+def find_team_match(team_name, team_list, league=None):
     """
     Try to match API team names to the Google Sheet 'Team' values.
-    Strategy:
-      1) exact hit
-      2) alias dictionary (for logos)
-      3) fuzzy get_close_matches (cutoff=0.5)
-      4) canonical token containment match (handles 'Detroit' -> 'Detroit Tigers',
-         'St. Louis' -> 'St. Louis Cardinals', 'Hawai'i' -> 'Hawaii', etc.)
+
+    Pro sports (NBA/MLB/NFL): allow alias + city-to-short + fuzzy/containment
+    College (NCAAF): strict token-based matching to prevent 'North Dakota' -> 'North Carolina' type errors.
     """
     team_name = (team_name or "").strip()
     if not team_name:
         return None
 
+    # League-specific conservative path for college
+    if league == "NCAAF":
+        m = _safe_match_college(team_name, team_list)
+        if m:
+            return m
+        logging.warning(f"⚠️ No match found for college team: {team_name}")
+        return None
+
+    # === Pro path ===
     # 1) exact
     if team_name in team_list:
         return team_name
 
-    # 2) alias => target (useful for some pro teams)
+    # 2) alias dictionary (full -> short)
     if team_name in TEAM_ALIASES:
         alias_target = TEAM_ALIASES[team_name]
         if alias_target in team_list:
             return alias_target
+
+    # 2b) city -> short nickname
+    if team_name in CITY_TO_SHORT:
+        short = CITY_TO_SHORT[team_name]
+        if short in team_list:
+            return short
 
     # 3) fuzzy
     matches = get_close_matches(team_name, team_list, n=1, cutoff=0.5)
@@ -265,7 +349,6 @@ def find_team_match(team_name, team_list):
         ccanon = _canon(cand)
         if tcanon == ccanon:
             return cand
-        # If one is a prefix/substring of the other, prefer the longer (more specific) candidate
         if tcanon in ccanon or ccanon in tcanon:
             if len(ccanon) > best_len:
                 best = cand
@@ -298,7 +381,6 @@ def predict_game_totals(league_name):
         global ncaaf_map
         schedule_teams = set()
         for g in games:
-            # Use correct keys from TheSportsDB payload
             schedule_teams.add(g.get("strHomeTeam"))
             schedule_teams.add(g.get("strAwayTeam"))
         schedule_teams = {t for t in schedule_teams if t}
@@ -318,10 +400,14 @@ def predict_game_totals(league_name):
         if league_name == "NCAAF":
             try:
                 _, stats_key = resolve_team(team_name, ncaaf_map)
-                team_name = stats_key
+                team_name_local = stats_key
             except Exception as e:
                 logging.warning(f"NCAAF resolve failed for {team_name}: {e}")
-        match = find_team_match(team_name, team_list)
+                team_name_local = team_name
+            match = find_team_match(team_name_local, team_list, league="NCAAF")
+        else:
+            match = find_team_match(team_name, team_list, league=league_name)
+
         if not match:
             return None, None
         try:

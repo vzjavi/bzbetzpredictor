@@ -14,18 +14,20 @@ import pytz
 from ncaaf_team_matching_helper import extend_mapping_with_schedule, resolve_team, save_mapping
 import re
 
+# -----------------------------------------------------------------------------
 # Logging config
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Load logo data from local JSON
+# -----------------------------------------------------------------------------
+# Static data / config
+# -----------------------------------------------------------------------------
 with open("team_logos.json", "r") as f:
     logo_data = json.load(f)
 
-# Flask app setup
 app = Flask(__name__)
 app.secret_key = "your_secret_key"
 
-# Constants
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SPREADSHEET_ID = "1ub_a9jetvc9BB6paGVIQ_0N_ETXLMEG43tD7zeE3Ljg"
 
@@ -36,22 +38,28 @@ SHEET_RANGES = {
     "MLB": "MLB!A1:D31",
 }
 
-API_KEY = "697039"
+# TheSportsDB v1 base (free key “123” works; replace with your premium key if you have one)
+API_KEY = "697039"  # keep your key; “123” also works for free tier
 SPORT_LEAGUES = {
     "NBA": "4387",
     "MLB": "4424",
     "NCAAF": "4479",
-    "NFL": "4391"
+    "NFL": "4391",
 }
 
-# Simple cache for Sheets reads to avoid 429s (per-minute rate limit)
+# ESPN requests sometimes return 40x unless we send a UA
+HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; BZBets/1.0; +https://example.com)",
+    "Accept": "application/json",
+}
+
+# Simple cache for Sheets reads to avoid 429s
 sheet_data_cache = {}  # {league_tab: (fetched_at_datetime, DataFrame)}
 CACHE_TTL = timedelta(minutes=2)
 
 LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
 
 NCAAF_MAP_PATH = os.path.join(os.path.dirname(__file__), "ncaaf_team_mapping.json")
-
 try:
     with open(NCAAF_MAP_PATH, "r", encoding="utf-8") as f:
         ncaaf_map = json.load(f)
@@ -119,12 +127,12 @@ TEAM_ALIASES = {
     "Detroit Tigers": "Tigers",
     "Minnesota Twins": "Twins",
     "Chicago White Sox": "White Sox",
-    "New York Yankees": "Yankees"
+    "New York Yankees": "Yankees",
 }
 
-# ---- NCAAF name normalization helpers ---------------------------------------
-
-# High-impact short names & variants -> school name as it likely appears in Sheets
+# -----------------------------------------------------------------------------
+# NCAAF name normalization helpers
+# -----------------------------------------------------------------------------
 NCAAF_NAME_ALIASES = {
     "USC": "Southern California",
     "LSU": "Louisiana State",
@@ -148,7 +156,6 @@ NCAAF_NAME_ALIASES = {
     "LIU": "Long Island",
 }
 
-# scrubs punctuation & the “University of …” style noise
 def _normalize_college_name(name: str) -> str:
     s = name.strip()
     if s in NCAAF_NAME_ALIASES:
@@ -162,7 +169,6 @@ def _normalize_college_name(name: str) -> str:
     return s.strip()
 
 def _ncaaf_variants(name: str):
-    """Generate a few reasonable variants to try against the Sheet index."""
     base = name.strip()
     norm = _normalize_college_name(base)
     variants = {base, norm}
@@ -180,12 +186,10 @@ def _ncaaf_variants(name: str):
         variants.add(" ".join(tokens[:2]))
     return [v for v in variants if v]
 
+# -----------------------------------------------------------------------------
+# Google Sheets
+# -----------------------------------------------------------------------------
 def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
-    """
-    Loads Team, G, PF, PA from the Google Sheet tab (A1:D).
-    Returns a DataFrame indexed by Team with numeric G/PF/PA.
-    Uses a small in-memory cache to respect Sheets API quotas.
-    """
     now = datetime.utcnow()
     cached = sheet_data_cache.get(league_tab)
     if cached:
@@ -232,6 +236,111 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     sheet_data_cache[league_tab] = (now, df.copy())
     return df
 
+# -----------------------------------------------------------------------------
+# Schedules: TheSportsDB primary + ESPN fallback
+# -----------------------------------------------------------------------------
+def _espn_ncaaf_from_site_scoreboard(ymd) -> list:
+    """Try ESPN 'site' scoreboard (single call, rich payload)."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates={ymd}"
+    try:
+        r = requests.get(url, headers=HTTP_HEADERS, timeout=20)
+        if r.status_code != 200:
+            logging.warning(f"ESPN site scoreboard {r.status_code}: {url}")
+            return []
+        data = r.json()
+        events = data.get("events") or []
+        out = []
+        for ev in events:
+            comps = (ev.get("competitions") or [])
+            if not comps:
+                continue
+            comp = comps[0]
+            iso_dt = comp.get("date")
+            try:
+                game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
+                dateEvent = game_dt_utc.date().isoformat()
+                strTime = game_dt_utc.strftime("%H:%M:%S")
+            except Exception:
+                continue
+            teams = comp.get("competitors") or []
+            home = next((t for t in teams if t.get("homeAway") == "home"), None)
+            away = next((t for t in teams if t.get("homeAway") == "away"), None)
+            if not home or not away:
+                continue
+            home_name = (home.get("team") or {}).get("displayName")
+            away_name = (away.get("team") or {}).get("displayName")
+            if not home_name or not away_name:
+                continue
+            out.append({
+                "strHomeTeam": home_name,
+                "strAwayTeam": away_name,
+                "dateEvent": dateEvent,
+                "strTime": strTime,
+            })
+        return out
+    except Exception as e:
+        logging.warning(f"ESPN site scoreboard failed: {e}")
+        return []
+
+def _espn_ncaaf_from_core_events(ymd) -> list:
+    """
+    Fallback to ESPN 'sports.core' events feed, then expand each competition to read teams.
+    """
+    base = f"https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events?dates={ymd}"
+    out = []
+    try:
+        r = requests.get(base, headers=HTTP_HEADERS, timeout=20)
+        if r.status_code != 200:
+            logging.warning(f"ESPN core events {r.status_code}: {base}")
+            return out
+        items = (r.json() or {}).get("items") or []
+        for item in items:
+            try:
+                # item['competitions'] is usually a list containing refs; fetch the first competition
+                comps_ref = (item.get("competitions") or [{}])[0].get("$ref")
+                if not comps_ref:
+                    continue
+                cr = requests.get(comps_ref, headers=HTTP_HEADERS, timeout=20)
+                if cr.status_code != 200:
+                    continue
+                comp = cr.json()
+                iso_dt = comp.get("date")
+                game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
+                dateEvent = game_dt_utc.date().isoformat()
+                strTime = game_dt_utc.strftime("%H:%M:%S")
+
+                competitors = comp.get("competitors") or []
+                home = next((t for t in competitors if t.get("homeAway") == "home"), None)
+                away = next((t for t in competitors if t.get("homeAway") == "away"), None)
+                if not home or not away:
+                    continue
+
+                # Each competitor['team'] is a ref; fetch it to get a clean displayName
+                def _team_name(team_obj):
+                    tref = (team_obj or {}).get("team", {}).get("$ref")
+                    if tref:
+                        tr = requests.get(tref, headers=HTTP_HEADERS, timeout=20)
+                        if tr.status_code == 200:
+                            return (tr.json() or {}).get("displayName")
+                    return None
+
+                home_name = _team_name(home)
+                away_name = _team_name(away)
+                if not home_name or not away_name:
+                    continue
+
+                out.append({
+                    "strHomeTeam": home_name,
+                    "strAwayTeam": away_name,
+                    "dateEvent": dateEvent,
+                    "strTime": strTime,
+                })
+            except Exception:
+                continue
+    except Exception as e:
+        logging.warning(f"ESPN core events failed: {e}")
+    return out
+
 def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
     today_local = datetime.now(LOCAL_TIMEZONE).date()
@@ -243,7 +352,7 @@ def get_todays_games(league_name):
     }
     season = season_map.get(league_name, "2024")
 
-    # --- 1) Primary: TheSportsDB --------------------------------------------
+    # Primary: TheSportsDB season feed (filter to today's date)
     url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
     sportsdb_games = []
     try:
@@ -256,6 +365,7 @@ def get_todays_games(league_name):
                 return False
             dt_str = f"{game['dateEvent']} {game['strTime']}"
             try:
+                # SportsDB times are UTC
                 game_dt_utc = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
                 return game_dt_utc.astimezone(LOCAL_TIMEZONE).date() == today_local
             except Exception:
@@ -268,69 +378,30 @@ def get_todays_games(league_name):
     logging.info(f"{league_name} SportsDB games for today: "
                  f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in sportsdb_games]}")
 
-    # --- 2) Fallback: ESPN scoreboard (NCAAF only) --------------------------
+    # Fallbacks for NCAAF only (to catch games SportsDB may miss)
     if league_name == "NCAAF":
-        try:
-            ymd = today_local.strftime("%Y%m%d")
-            espn_url = (
-                "https://site.api.espn.com/apis/v2/sports/football/college-football/scoreboard"
-                f"?dates={ymd}&groups=80&seasontype=2"
-            )
-            er = requests.get(espn_url, timeout=20)
-            if er.status_code != 200:
-                logging.warning(f"ESPN {er.status_code}: {espn_url}")
-            ejson = er.json()
-            espn_events = ejson.get("events", []) or []
+        ymd = today_local.strftime("%Y%m%d")
 
-            if not espn_events:
-                logging.warning(f"ESPN returned 0 events. First 300 chars: {er.text[:300]!r}")
+        espn_games = _espn_ncaaf_from_site_scoreboard(ymd)
+        if not espn_games:
+            espn_games = _espn_ncaaf_from_core_events(ymd)
 
-            espn_games = []
-            for ev in espn_events:
-                comps = (ev.get("competitions") or [])
-                if not comps:
-                    continue
-                comp = comps[0]
-                iso_dt = comp.get("date")
-                try:
-                    game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
-                    dateEvent = game_dt_utc.date().isoformat()
-                    strTime = game_dt_utc.strftime("%H:%M:%S")
-                except Exception:
-                    continue
+        logging.info(f"NCAAF ESPN games for today: "
+                     f"{[(g['strAwayTeam'], g['strHomeTeam']) for g in espn_games]}")
 
-                teams = comp.get("competitors") or []
-                home = next((t for t in teams if t.get("homeAway") == "home"), None)
-                away = next((t for t in teams if t.get("homeAway") == "away"), None)
-                if not home or not away:
-                    continue
-
-                home_name = (home.get("team") or {}).get("displayName")
-                away_name = (away.get("team") or {}).get("displayName")
-                if not home_name or not away_name:
-                    continue
-
-                espn_games.append({
-                    "strHomeTeam": home_name,
-                    "strAwayTeam": away_name,
-                    "dateEvent": dateEvent,
-                    "strTime": strTime,
-                })
-
-            logging.info(f"NCAAF ESPN games for today: "
-                         f"{[(g['strAwayTeam'], g['strHomeTeam']) for g in espn_games]}")
-
-            existing = {(g.get("strAwayTeam"), g.get("strHomeTeam")) for g in sportsdb_games}
-            for g in espn_games:
-                key = (g["strAwayTeam"], g["strHomeTeam"])
-                if key not in existing:
-                    sportsdb_games.append(g)
-                    existing.add(key)
-        except Exception as e:
-            logging.warning(f"ESPN fallback failed: {e}")
+        # merge: keep SportsDB originals, add ESPN pairs not already present
+        existing = {(g.get("strAwayTeam"), g.get("strHomeTeam")) for g in sportsdb_games}
+        for g in espn_games:
+            key = (g["strAwayTeam"], g["strHomeTeam"])
+            if key not in existing:
+                sportsdb_games.append(g)
+                existing.add(key)
 
     return sportsdb_games
 
+# -----------------------------------------------------------------------------
+# Helpers (matching, logos)
+# -----------------------------------------------------------------------------
 def find_team_match(team_name, team_list):
     team_name = team_name.strip()
     if team_name in team_list:
@@ -353,12 +424,16 @@ def get_team_logo(team_short_name, sport):
         logging.warning(f"Logo lookup failed for {team_short_name}: {e}")
         return None
 
+# -----------------------------------------------------------------------------
+# Prediction pipeline
+# -----------------------------------------------------------------------------
 def predict_game_totals(league_name):
     predictions = []
 
     games = get_todays_games(league_name)
     logging.info(f"{league_name} games fetched: {len(games)}")
 
+    # NCAAF: extend team map with any new schedule teams
     if league_name == "NCAAF":
         global ncaaf_map
         schedule_teams = set()
@@ -372,6 +447,7 @@ def predict_game_totals(league_name):
         except Exception as e:
             logging.warning(f"NCAAF mapping extend failed: {e}")
 
+    # Load stats from Google Sheets (expects columns: Team | G | PF | PA)
     stats_df = fetch_data_from_sheets(league_name)
     team_list = stats_df.index.tolist()
     seen_matchups = set()
@@ -388,9 +464,7 @@ def predict_game_totals(league_name):
             return 0.0, 0.0
 
     def _find_row_ncaaf(raw_name):
-        """
-        Robust NCAAF matcher (resolver-first).
-        """
+        """Resolver-first, then normalized variants."""
         try:
             primary, stats_key = resolve_team(raw_name, ncaaf_map, sheet_names=team_list)
             logging.info(f"[NCAAF resolver] raw='{raw_name}' → primary='{primary}', stats_key='{stats_key}'")
@@ -431,6 +505,7 @@ def predict_game_totals(league_name):
         team_home = game.get("strHomeTeam")
         team_away = game.get("strAwayTeam")
 
+        # Parse & localize time
         game_time_local = None
         if game.get("dateEvent") and game.get("strTime"):
             dt_str = f"{game['dateEvent']} {game['strTime']}"
@@ -468,8 +543,9 @@ def predict_game_totals(league_name):
 
     return predictions
 
-# -------------------- Admin endpoints for cron/ops ----------------------------
-
+# -----------------------------------------------------------------------------
+# Admin endpoints
+# -----------------------------------------------------------------------------
 def _check_admin_token():
     expected = os.environ.get("ADMIN_TOKEN", "")
     got = request.headers.get("X-Admin-Token", "")
@@ -478,28 +554,23 @@ def _check_admin_token():
 
 @app.post("/admin/daily")
 def admin_daily():
-    """
-    Trigger daily maintenance tasks (cron-safe).
-    Currently: run the ESPN scraper to refresh Sheets.
-    """
     _check_admin_token()
     summary = run_scraper()
     return jsonify({"ok": True, "summary": summary, "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat()})
 
-# (Optional) GET variant for manual testing
 @app.get("/admin/daily")
 def admin_daily_get():
     _check_admin_token()
     summary = run_scraper()
     return jsonify({"ok": True, "summary": summary, "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat()})
 
-# (Optional) health check
 @app.get("/admin/health")
 def admin_health():
     return jsonify({"ok": True, "time": datetime.now(LOCAL_TIMEZONE).isoformat()})
 
-# -------------------- Web UI --------------------------------------------------
-
+# -----------------------------------------------------------------------------
+# UI
+# -----------------------------------------------------------------------------
 @app.route("/")
 def index():
     all_predictions = []

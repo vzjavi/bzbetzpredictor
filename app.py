@@ -359,36 +359,44 @@ def predict_game_totals(league_name):
         except Exception:
             return 0.0, 0.0
 
+    
+
     def _find_row_ncaaf(raw_name):
         """
-        Robust NCAAF matcher:
-        1) Try direct/fuzzy against Sheet with several normalized variants.
-        2) Then ask resolve_team(...) (now with sheet_names=team_list) and try its stats_key.
+        Robust NCAAF matcher (resolver-first):
+        1) Ask resolve_team(...) to choose the right school (uses mapping + guardrails).
+        Try its stats_key and primary against the Sheet.
+        2) If that fails, try direct/fuzzy against the Sheet with normalized variants.
         """
-        # (1) try raw + normalized variants straight against Sheet names
-        for cand in _ncaaf_variants(raw_name):
-            match = find_team_match(cand, team_list)
-            if match:
-                try:
-                    return match, stats_df.loc[match]
-                except KeyError:
-                    pass
 
-        # (2) fall back to mapping-based resolver (bias with sheet names)
+        # (1) resolver FIRST (lets Miami guardrail take effect)
         try:
-            _, stats_key = resolve_team(raw_name, ncaaf_map, sheet_names=team_list)
-            if stats_key:
-                match = find_team_match(stats_key, team_list)
-                if match:
-                    try:
-                        return match, stats_df.loc[match]
-                    except KeyError:
-                        pass
+            primary, stats_key = resolve_team(raw_name, ncaaf_map, sheet_names=team_list)
+            logging.info(f"[NCAAF resolver] raw='{raw_name}' → primary='{primary}', stats_key='{stats_key}'")
+            # Try stats_key first (that's how your Sheet is keyed), then primary
+            for cand in [stats_key, primary]:
+                if cand:
+                    match = find_team_match(cand, team_list)
+                    if match:
+                        try:
+                            return match, stats_df.loc[match]
+                        except KeyError:
+                            pass
         except Exception as e:
-            logging.warning(f"NCAAF resolve failed for {raw_name}: {e}")
+            logging.warning(f"resolve_team failed for '{raw_name}': {e}")
 
-        logging.warning(f"⚠️ No match found for college team: {raw_name}")
-        return None, None
+    # (2) fall back to raw + normalized variants straight against Sheet names
+    for cand in _ncaaf_variants(raw_name):
+        match = find_team_match(cand, team_list)
+        if match:
+            try:
+                return match, stats_df.loc[match]
+            except KeyError:
+                pass
+
+    logging.warning(f"⚠️ No match found for college team: {raw_name}")
+    return None, None
+
 
     def find_row(team_name):
         if league_name == "NCAAF":

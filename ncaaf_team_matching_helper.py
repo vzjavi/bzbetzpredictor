@@ -149,6 +149,9 @@ def resolve_team(
         if prefer in mapping:
             return prefer, mapping[prefer].get("stats_key", prefer)
         return prefer, prefer
+    
+    print(f"[resolve_team] raw='{team_name}' → prefer='{prefer}'", flush=True)
+
     # --- end guardrails ---
 
     # Build canonical indexes

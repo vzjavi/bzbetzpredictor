@@ -284,62 +284,103 @@ def _espn_ncaaf_from_site_scoreboard(ymd) -> list:
 
 def _espn_ncaaf_from_core_events(ymd) -> list:
     """
-    Fallback to ESPN 'sports.core' events feed, then expand each competition to read teams.
+    ESPN Core API fallback:
+      1) GET events list (items are $ref links)
+      2) GET each event
+      3) GET the first competition for that event
+      4) GET each team to read displayName
     """
-    base = f"https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events?dates={ymd}"
+    base = (
+        f"https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/"
+        f"events?dates={ymd}&limit=300"
+    )
     out = []
     try:
         r = requests.get(base, headers=HTTP_HEADERS, timeout=20)
         if r.status_code != 200:
             logging.warning(f"ESPN core events {r.status_code}: {base}")
             return out
+
         items = (r.json() or {}).get("items") or []
         for item in items:
             try:
-                # item['competitions'] is usually a list containing refs; fetch the first competition
-                comps_ref = (item.get("competitions") or [{}])[0].get("$ref")
-                if not comps_ref:
+                # 1) follow the event $ref
+                ev_ref = item.get("$ref")
+                if not ev_ref:
                     continue
-                cr = requests.get(comps_ref, headers=HTTP_HEADERS, timeout=20)
-                if cr.status_code != 200:
+                ev_r = requests.get(ev_ref, headers=HTTP_HEADERS, timeout=20)
+                if ev_r.status_code != 200:
                     continue
-                comp = cr.json()
+                ev = ev_r.json()
+
+                # 2) competitions is itself a collection => get first item's $ref
+                comps_col_ref = (ev.get("competitions") or {}).get("$ref")
+                if not comps_col_ref:
+                    continue
+                comps_col_r = requests.get(comps_col_ref, headers=HTTP_HEADERS, timeout=20)
+                if comps_col_r.status_code != 200:
+                    continue
+                comps_items = (comps_col_r.json() or {}).get("items") or []
+                if not comps_items:
+                    continue
+
+                comp_ref = comps_items[0].get("$ref")
+                if not comp_ref:
+                    continue
+                comp_r = requests.get(comp_ref, headers=HTTP_HEADERS, timeout=20)
+                if comp_r.status_code != 200:
+                    continue
+                comp = comp_r.json()
+
                 iso_dt = comp.get("date")
                 game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
                 dateEvent = game_dt_utc.date().isoformat()
                 strTime = game_dt_utc.strftime("%H:%M:%S")
 
-                competitors = comp.get("competitors") or []
-                home = next((t for t in competitors if t.get("homeAway") == "home"), None)
-                away = next((t for t in competitors if t.get("homeAway") == "away"), None)
-                if not home or not away:
+                # 3) competitors is a collection with 'items' -> each has team $ref
+                comp_comps_ref = (comp.get("competitors") or {}).get("$ref")
+                if not comp_comps_ref:
                     continue
-
-                # Each competitor['team'] is a ref; fetch it to get a clean displayName
-                def _team_name(team_obj):
-                    tref = (team_obj or {}).get("team", {}).get("$ref")
-                    if tref:
-                        tr = requests.get(tref, headers=HTTP_HEADERS, timeout=20)
-                        if tr.status_code == 200:
-                            return (tr.json() or {}).get("displayName")
-                    return None
-
-                home_name = _team_name(home)
-                away_name = _team_name(away)
-                if not home_name or not away_name:
+                comp_comps_r = requests.get(comp_comps_ref, headers=HTTP_HEADERS, timeout=20)
+                if comp_comps_r.status_code != 200:
                     continue
+                comp_items = (comp_comps_r.json() or {}).get("items") or []
 
-                out.append({
-                    "strHomeTeam": home_name,
-                    "strAwayTeam": away_name,
-                    "dateEvent": dateEvent,
-                    "strTime": strTime,
-                })
+                home_name = away_name = None
+                for citem in comp_items:
+                    c_ref = citem.get("$ref")
+                    if not c_ref:
+                        continue
+                    c_r = requests.get(c_ref, headers=HTTP_HEADERS, timeout=20)
+                    if c_r.status_code != 200:
+                        continue
+                    c = c_r.json()
+                    team_ref = (c.get("team") or {}).get("$ref")
+                    side = c.get("homeAway")
+                    if not team_ref or side not in {"home", "away"}:
+                        continue
+                    t_r = requests.get(team_ref, headers=HTTP_HEADERS, timeout=20)
+                    if t_r.status_code != 200:
+                        continue
+                    t = t_r.json()
+                    if side == "home":
+                        home_name = t.get("displayName")
+                    else:
+                        away_name = t.get("displayName")
+
+                if home_name and away_name:
+                    out.append({
+                        "strHomeTeam": home_name,
+                        "strAwayTeam": away_name,
+                        "dateEvent": dateEvent,
+                        "strTime": strTime,
+                    })
             except Exception:
                 continue
     except Exception as e:
         logging.warning(f"ESPN core events failed: {e}")
     return out
+
 
 def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]

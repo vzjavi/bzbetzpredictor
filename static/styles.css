@@ -189,3 +189,83 @@ tbody tr:hover{ background: #eef2f7; }
 @media (max-width: 720px){
   .site-header .brand-img{ height: 140px; }
 }
+/* ===== Mobile layout (keep desktop the same) ===== */
+@media (max-width: 600px){
+
+  /* Page chrome */
+  .site-header .brand-img{ height: 110px !important; }
+  .brand-sub{ font-size: 16px; }
+
+  /* Search/card spacing */
+  .page-wrap{ padding: 0 14px; }
+  .controls{ padding: 10px; gap: 10px; }
+  .results-count{ font-size: 13px; }
+
+  /* Table becomes a tidy list – no horizontal scroll */
+  .table-wrap{ overflow: visible; border-radius: 12px; }
+  table{ min-width: 0; width: 100%; font-size: 16px; }
+  thead{ display: none; }                           /* hide big header row */
+
+  /* Each row turns into a 2-column grid:
+     [matchup | total]
+     [time    | total] */
+  tbody tr{
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-column-gap: 12px;
+    align-items: center;
+    background: #fff;
+    border-radius: 12px;
+    margin: 10px 0;
+  }
+
+  /* Remove heavy row dividers; add soft cards */
+  tbody tr:hover{ background: #fff; }
+  .cell{ border-bottom: 0; padding: 12px 10px; text-align: left; }
+
+  /* Column mapping (original order: League | Time | Matchup | Total) */
+  tbody tr > td:nth-child(1){ display: none; }     /* hide League on mobile */
+
+  /* Time → small subtitle under matchup */
+  tbody tr > td:nth-child(2){
+    grid-column: 1;
+    order: 2;
+    color: var(--text-dim);
+    font-size: 12px;
+    padding-top: 0;
+  }
+
+  /* Matchup main line */
+  tbody tr > td:nth-child(3){
+    grid-column: 1;
+    order: 1;
+    font-weight: 800;
+  }
+
+  /* Predicted Total pill stays on the right, vertically centered */
+  tbody tr > td:nth-child(4){
+    grid-column: 2;
+    order: 1;
+    justify-self: end;
+    text-align: right;
+    padding-right: 6px;
+  }
+
+  /* Logos & spacing tuned for small screens */
+  .matchup-flex{ justify-content: flex-start; gap: 10px; }
+  .logo{
+    width: 38px !important;
+    height: 38px !important;
+    padding: 4px;
+    border-radius: 8px;
+  }
+  .team{ font-weight: 900; }
+  .vs{ margin: 0 6px; }
+
+  /* Pill smaller but readable */
+  .pill{
+    min-width: 70px;
+    padding: 8px 12px;
+    font-size: 16px;
+  }
+}

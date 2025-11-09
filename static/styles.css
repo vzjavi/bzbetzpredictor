@@ -192,66 +192,74 @@ tbody tr:hover{ background: #eef2f7; }
 /* ===== Mobile layout (keep desktop the same) ===== */
 @media (max-width: 600px){
 
-  /* Page chrome */
+  /* Header + spacing */
   .site-header .brand-img{ height: 110px !important; }
-  .brand-sub{ font-size: 16px; }
-
-  /* Search/card spacing */
   .page-wrap{ padding: 0 14px; }
   .controls{ padding: 10px; gap: 10px; }
-  .results-count{ font-size: 13px; }
 
-  /* Table becomes a tidy list – no horizontal scroll */
+  /* Turn table into cards; remove big header row */
   .table-wrap{ overflow: visible; border-radius: 12px; }
   table{ min-width: 0; width: 100%; font-size: 16px; }
-  thead{ display: none; }                           /* hide big header row */
+  thead{ display: none; }
 
-  /* Each row turns into a 2-column grid:
-     [matchup | total]
-     [time    | total] */
+  /* Each row: 2 columns, fixed right slot for the pill */
   tbody tr{
     display: grid;
-    grid-template-columns: 1fr auto;
-    grid-column-gap: 12px;
+    grid-template-columns: minmax(0,1fr) 104px; /* <-- fixed pill column */
+    grid-template-rows: auto auto;             /* matchup (row1) + time (row2) */
+    gap: 6px 12px;
     align-items: center;
     background: #fff;
     border-radius: 12px;
     margin: 10px 0;
+    padding: 12px 12px;
+    overflow: hidden;                          /* keep everything inside */
   }
 
-  /* Remove heavy row dividers; add soft cards */
-  tbody tr:hover{ background: #fff; }
-  .cell{ border-bottom: 0; padding: 12px 10px; text-align: left; }
+  /* Hide "League" */
+  tbody tr > td:nth-child(1){ display: none; }
 
-  /* Column mapping (original order: League | Time | Matchup | Total) */
-  tbody tr > td:nth-child(1){ display: none; }     /* hide League on mobile */
-
-  /* Time → small subtitle under matchup */
+  /* Time as subtle subtitle */
   tbody tr > td:nth-child(2){
     grid-column: 1;
-    order: 2;
+    grid-row: 2;
     color: var(--text-dim);
     font-size: 12px;
-    padding-top: 0;
+    padding: 0;
+    text-align: left;
   }
 
-  /* Matchup main line */
+  /* Matchup row */
   tbody tr > td:nth-child(3){
     grid-column: 1;
-    order: 1;
+    grid-row: 1;
+    padding: 0;
     font-weight: 800;
+    text-align: left;
   }
 
-  /* Predicted Total pill stays on the right, vertically centered */
+  /* Predicted Total cell: keep to the right, span both rows */
   tbody tr > td:nth-child(4){
     grid-column: 2;
-    order: 1;
+    grid-row: 1 / -1;         /* spans matchup + time */
+    align-self: center;
     justify-self: end;
+    padding: 0 6px 0 0;
     text-align: right;
-    padding-right: 6px;
   }
 
-  /* Logos & spacing tuned for small screens */
+  /* Pill fits the fixed slot neatly */
+  .pill{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 88px;              /* inside the 104px column (with padding) */
+    min-width: 88px;
+    padding: 8px 12px;
+    font-size: 16px;
+  }
+
+  /* Logos & spacing */
   .matchup-flex{ justify-content: flex-start; gap: 10px; }
   .logo{
     width: 38px !important;
@@ -259,13 +267,6 @@ tbody tr:hover{ background: #eef2f7; }
     padding: 4px;
     border-radius: 8px;
   }
-  .team{ font-weight: 900; }
   .vs{ margin: 0 6px; }
-
-  /* Pill smaller but readable */
-  .pill{
-    min-width: 70px;
-    padding: 8px 12px;
-    font-size: 16px;
-  }
 }
+

@@ -130,7 +130,7 @@ tbody tr:hover{ background:#eef2f7; }
   .logo{ width:48px; height:48px; }
 }
 
-/* ---------- Phones (single source of truth) ---------- */
+/* ---------- Phones (poster-card layout like screenshot) ---------- */
 @media (max-width: 430px){
 
   /* Header & search compact */
@@ -147,42 +147,56 @@ tbody tr:hover{ background:#eef2f7; }
   table{ min-width:0; font-size:16px; }
   thead{ display:none; }
 
-  /* Each row is a card with room reserved for the pill */
+  /* Each row is a card; reserve space for time & pill */
   tbody tr{
     display:block; position:relative;
-    margin:10px 0; padding:10px 12px 12px 12px;
-    border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); background:#fff;
-    padding-right:96px;      /* keep text out of pill area */
+    margin:12px 0; padding:40px 112px 14px 12px; /* top for time, right for pill */
+    border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); background:#fff;
   }
 
   /* Cells become blocks */
   .cell{ display:block; border:0; padding:0; text-align:left; }
   .cell.sport{ display:none; }   /* hide league */
 
-  /* Matchup line */
-  .matchup-flex{
-    display:flex; align-items:center; justify-content:flex-start; gap:8px; flex-wrap:wrap;
-    max-width: calc(100% - 100px); /* prevents overlap with pill */
-  }
-  .logo{ width:32px !important; height:32px !important; border-radius:8px; padding:4px; }
-  .team{ font-size:15px; font-weight:800; line-height:1.15; }
-  .vs{ margin:0 4px; font-weight:800; }
-
-  /* Time under matchup, aligned with logo */
+  /* Time centered at top */
   .cell.time{
-    margin-top:6px; color:var(--text-dim); font-size:12px; padding-left:44px; border:0;
+    position:absolute; top:10px; left:0; right:0;
+    margin:0; text-align:center;
+    color:var(--text-dim); font-size:13px; font-weight:700;
   }
 
   /* Pill pinned top-right */
-  .cell.total{ position:absolute; right:12px; top:12px; text-align:right; }
+  .cell.total{ position:absolute; right:12px; top:10px; text-align:right; }
   .pill{
     display:inline-flex; align-items:center; justify-content:center;
-    min-width:64px; padding:5px 10px; font-size:14px; border-radius:999px;
+    min-width:72px; padding:6px 12px; font-size:15px; border-radius:999px;
   }
 
-  /* Remove zebra striping on cards */
-  tbody tr:nth-child(odd){ background:#fff; }
-  tbody tr:hover{ background:#f1f5f9; }
+  /* Stack the matchup like a poster:
+     [logo1 team1]
+     [   vs     ]
+     [logo2 team2] */
+  .matchup-flex{
+    display:grid;
+    grid-template-columns: 44px 1fr;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "logo1 team1"
+      ".     vs"
+      "logo2 team2";
+    column-gap:10px; row-gap:10px; align-items:center;
+    max-width: 100%;
+  }
+
+  /* Map children by natural order: logo, team1, vs, team2, logo */
+  .matchup-flex .logo:first-child{ grid-area: logo1; }
+  .matchup-flex .team:first-of-type{ grid-area: team1; }
+  .matchup-flex .vs{ grid-area: vs; padding-left:44px; font-weight:800; color:var(--text-dim); }
+  .matchup-flex .team:last-of-type{ grid-area: team2; }
+  .matchup-flex .logo:last-child{ grid-area: logo2; }
+
+  .logo{ width:40px !important; height:40px !important; border-radius:10px; padding:6px; }
+  .team{ font-size:18px; font-weight:900; line-height:1.15; }
 }
 
 /* ---------- Extra-small phones (SE / Zoomed) ---------- */
@@ -190,11 +204,12 @@ tbody tr:hover{ background:#eef2f7; }
   .page-wrap{ padding:0 12px; }
   .site-header .brand-img{ height:64px !important; }
   .search input{ font-size:14px; }
-  tbody tr{ padding-right:88px; }
-  .pill{ min-width:58px; padding:4px 8px; font-size:13px; }
-  .logo{ width:28px !important; height:28px !important; }
-  .team{ font-size:14px; }
-  .cell.time{ font-size:11px; padding-left:40px; }
+  tbody tr{ padding:38px 100px 12px 12px; } /* keep time top & pill right */
+  .pill{ min-width:64px; padding:5px 10px; font-size:14px; }
+  .logo{ width:36px !important; height:36px !important; }
+  .team{ font-size:16px; }
+  .matchup-flex{ grid-template-columns: 40px 1fr; }
+  .matchup-flex .vs{ padding-left:40px; }
 }
 
 /* ---------- Small utilities ---------- */

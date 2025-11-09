@@ -386,5 +386,68 @@ tbody tr:hover{ background: #eef2f7; }
     font-size:15px;
   }
 }
+/* ===== Compact iPhone layout — scales everything down neatly ===== */
+@media (max-width: 430px){
+  /* Header + search tighter */
+  .page-wrap{ margin:16px auto; padding:0 14px; }
+  .site-header{ gap:6px; margin-bottom:8px; }
+  .site-header .brand-img{ height:72px !important; }  /* was 84 */
+  .brand-sub{ font-size:15px; font-weight:800; }
+  .controls{ padding:8px 10px; border-radius:12px; }
+  .search input{ padding:10px 36px; font-size:15px; }
+  .results-count{ font-size:13px; }
+
+  /* Card rows */
+  tbody tr{
+    display:block;
+    position:relative;
+    margin:10px 0;
+    padding:10px 12px 12px 12px;
+    border-radius:12px;
+    box-shadow: var(--shadow);
+    /* keep space for the pill so nothing collides */
+    padding-right:96px;  /* was 112 */
+  }
+
+  .cell{ display:block; border:0; padding:0; text-align:left; }
+  .cell.sport{ display:none; } /* hide league on phones */
+
+  /* Matchup line */
+  .matchup-flex{ gap:8px; align-items:center; }
+  .logo{ width:32px !important; height:32px !important; border-radius:8px; }
+  .team{ font-size:15px; font-weight:800; line-height:1.15; }
+  .vs{ margin:0 4px; }
+
+  /* Time below matchup */
+  .cell.time{
+    margin-top:6px;
+    color:var(--text-dim);
+    font-size:12px;
+    padding-left:44px;   /* aligns under logo */
+  }
+
+  /* Predicted Total pill pinned right */
+  .cell.total{ position:absolute; top:12px; right:12px; text-align:right; }
+  .pill{
+    min-width:64px;        /* was 72+ */
+    padding:5px 10px;      /* tighter */
+    font-size:14px;        /* was 15–17 */
+    display:inline-flex; align-items:center; justify-content:center;
+    border-radius:999px;
+  }
+}
+
+/* Extra-small phones (SE / zoomed display) */
+@media (max-width: 380px){
+  .page-wrap{ padding:0 12px; }
+  .site-header .brand-img{ height:64px !important; }
+  .search input{ font-size:14px; }
+  tbody tr{ padding-right:88px; }
+  .pill{ min-width:58px; padding:4px 8px; font-size:13px; }
+  .logo{ width:28px !important; height:28px !important; }
+  .team{ font-size:14px; }
+  .cell.time{ font-size:11px; padding-left:40px; }
+}
+
 
 

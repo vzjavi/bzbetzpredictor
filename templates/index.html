@@ -1,53 +1,101 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Bz Betz Predictor</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BZ Bets — Over/Under Predictions</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <style>
+    :root { --font-ui: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    body { font-family: var(--font-ui); }
+    .brand-img { height: 40px; display:block; }
+    .brand-fallback { font-weight: 900; font-size: 28px; letter-spacing: 1px; }
+  </style>
 </head>
-<body>
-    <div class="logo">
-        <img src="{{ url_for('static', filename='XHE1qwUp_400x400.png') }}" alt="BZ Bets Logo">
-    </div>
-    <h3>Over/Under Predictions for {{ now.strftime('%B %d, %Y') }}</h3>
-    <div class="table-container">
-    <table>
-        <thead>
+<body class="page">
+  <div class="page-wrap">
+    <header class="site-header">
+      <div class="brand" style="align-items:center;text-align:center;">
+        {% if logo_url %}
+          <img src="{{ logo_url }}" alt="BZ Bets" class="brand-img">
+        {% else %}
+          <div class="brand-fallback">BZ BETS</div>
+        {% endif %}
+        <div class="brand-sub">Over/Under Predictions for {{ date_str }}</div>
+      </div>
+
+      <div class="controls">
+        <label class="sr-only" for="searchInput">Search by team name</label>
+        <div class="search" style="max-width:1000px; width:100%;">
+          <svg aria-hidden="true" viewBox="0 0 24 24" class="search-icon"><path d="M21 21l-4.3-4.3m2.1-5.4a7.5 7.5 0 11-15 0 7.5 7.5 0 0115 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input id="searchInput" type="search" placeholder="Search a team (e.g., Celtics, Dolphins, Longhorns)" autocomplete="off" />
+          <button id="clearSearch" type="button" class="btn-clear" aria-label="Clear search">×</button>
+        </div>
+        <div class="results-count" aria-live="polite">
+          <span id="visibleCount">0</span> of <span id="totalCount">0</span> games
+        </div>
+      </div>
+    </header>
+
+    <main class="card">
+      <div class="table-wrap">
+        <table class="predictions" id="predictionsTable">
+          <thead>
             <tr>
-                <th>Sport</th>
-                <th>Time</th>
-                <th>Matchup</th>
-                <th>Predicted Total</th>
+              <th class="th-sport">League</th>
+              <th class="th-time">Time</th>
+              <th class="th-matchup">Matchup</th>
+              <th class="th-total">Predicted Total</th>
             </tr>
-        </thead>
-        <tbody>
-            {% for game in predictions %}
-            <tr>
-                <td>{{ game.sport }}</td>
-                <td>{{ game.game_time.strftime('%I:%M %p') if game.game_time else 'TBD' }} {{ game.game_time.tzname() if game.game_time else '' }}</td>
-                <td class="matchup">
-                    <div class="matchup-wrapper">
-                        <span class="team-block">
-                            {% if game.team1_logo %}
-                            <img src="{{ game.team1_logo }}" alt="{{ game.team1 }}">
-                            {% endif %}
-                            {{ game.team1 }}
-                        </span>
-                        <strong>vs</strong>
-                        <span class="team-block">
-                            {{ game.team2 }}
-                            {% if game.team2_logo %}
-                            <img src="{{ game.team2_logo }}" alt="{{ game.team2 }}">
-                            {% endif %}
-                        </span>
-                    </div>
+          </thead>
+          <tbody>
+            {% for g in predictions %}
+              {# Robust fallbacks so names/logos render with zero backend changes #}
+              {% set home = g.get('home_team') or g.get('home') or g.get('home_name') or g.get('homeTeam') or g.get('team2') or '' %}
+              {% set away = g.get('away_team') or g.get('away') or g.get('away_name') or g.get('awayTeam') or g.get('team1') or '' %}
+              {% set hlogo = g.get('home_logo') or g.get('home_logo_url') or g.get('homeLogo') or g.get('team2_logo') or '' %}
+              {% set alogo = g.get('away_logo') or g.get('away_logo_url') or g.get('awayLogo') or g.get('team1_logo') or '' %}
+              {% set time_local = g.get('time_local') or g.get('time') or g.get('local_time') or g.get('game_time') or '' %}
+              {% set league = g.get('league') or g.get('sport') or '' %}
+              {% set total = g.get('predicted_total') or g.get('total') or g.get('pred_total') %}
+
+              <tr class="game-row"
+                  data-search="{{ (home ~ ' ' ~ away ~ ' ' ~ league ~ ' ' ~ time_local)|lower }}">
+                <td class="cell sport">{{ league }}</td>
+                <td class="cell time">
+                    {% set t = g.get('display_time')
+                        or (g.get('game_time').strftime("%I:%M %p") if g.get('game_time') else time_local) %}
+                    {{ t }}
                 </td>
-                <td><strong>{{ game.predicted_total }}</strong></td>
-            </tr>
+
+                <td class="cell matchup">
+                  <div class="matchup-flex">
+                    {% if alogo %}<img class="logo" alt="{{ away }} logo" src="{{ alogo }}">{% endif %}
+                    <span class="team home">{{ away }}</span>
+                    <span class="vs">vs</span>
+                    <span class="team away">{{ home }}</span>
+                    {% if hlogo %}<img class="logo" alt="{{ home }} logo" src="{{ hlogo }}">{% endif %}
+                  </div>
+                </td>
+                <td class="cell total">
+                  <span class="pill">
+                    {% if total is not none %}{{ "%.1f"|format(total) }}{% else %}—{% endif %}
+                  </span>
+                </td>
+              </tr>
             {% endfor %}
-        </tbody>
-    </table>
-    </div>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted tip">Tip: type a few letters—results filter instantly. Clear with the “×”.</p>
+    </main>
+
+    <footer class="site-footer">
+      <small>Model shows totals only; no market lines. Times shown in {{ tz_name or "CST" }}.</small>
+    </footer>
+  </div>
+
+  <script src="{{ url_for('static', filename='search.js') }}" defer></script>
 </body>
 </html>

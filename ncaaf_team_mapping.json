@@ -99,7 +99,8 @@
   "BYU": {
     "aliases": [
       "BYU",
-      "BYU Cougars"
+      "BYU Cougars",
+      "Brigham Young"
     ],
     "abbr": "",
     "stats_key": "BYU Cougars",
@@ -503,6 +504,7 @@
   },
   "Kansas State": {
     "aliases": [
+      "K-State",
       "Kansas St",
       "Kansas State",
       "Kansas State Wildcats"
@@ -555,7 +557,8 @@
   "LSU": {
     "aliases": [
       "LSU",
-      "LSU Tigers"
+      "LSU Tigers",
+      "Louisiana State"
     ],
     "abbr": "",
     "stats_key": "LSU Tigers",
@@ -945,6 +948,8 @@
   },
   "Ole Miss": {
     "aliases": [
+      "Mississippi",
+      "Mississippi Rebels",
       "Ole Miss",
       "Ole Miss Rebels"
     ],
@@ -1313,6 +1318,7 @@
   },
   "USC": {
     "aliases": [
+      "Southern California",
       "USC",
       "USC Trojans"
     ],
@@ -1325,6 +1331,8 @@
   },
   "UTEP": {
     "aliases": [
+      "Texas El Paso",
+      "Texas-El Paso",
       "UTEP",
       "UTEP Miners"
     ],
@@ -1337,6 +1345,7 @@
   },
   "UTSA": {
     "aliases": [
+      "Texas San Antonio",
       "UTSA",
       "UTSA Roadrunners"
     ],
@@ -1459,6 +1468,7 @@
   },
   "Western Kentucky": {
     "aliases": [
+      "WKU",
       "Western Kentucky",
       "Western Kentucky Hilltoppers"
     ],
@@ -1501,6 +1511,187 @@
     "abbr": "",
     "stats_key": "Wyoming Cowboys",
     "notes": "",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "UMass": {
+    "aliases": [
+      "Massachusetts",
+      "Massachusetts Minutemen"
+    ],
+    "abbr": "",
+    "stats_key": "UMass",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Cal": {
+    "aliases": [
+      "California",
+      "California Golden Bears"
+    ],
+    "abbr": "",
+    "stats_key": "Cal",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Louisiana": {
+    "aliases": [
+      "Louisiana Ragin' Cajuns",
+      "Louisiana-Lafayette",
+      "ULL"
+    ],
+    "abbr": "",
+    "stats_key": "Louisiana",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Louisiana-Monroe": {
+    "aliases": [
+      "Louisiana Monroe",
+      "ULM"
+    ],
+    "abbr": "",
+    "stats_key": "Louisiana-Monroe",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Georgia State": {
+    "aliases": [
+      "Georgia St"
+    ],
+    "abbr": "",
+    "stats_key": "Georgia State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Southeastern Louisiana": {
+    "aliases": [
+      "SE Louisiana",
+      "Southeastern Louisiana Lions"
+    ],
+    "abbr": "",
+    "stats_key": "Southeastern Louisiana",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Southeast Missouri State": {
+    "aliases": [
+      "SE Missouri St",
+      "SE Missouri State",
+      "SEMO",
+      "Southeast Missouri St"
+    ],
+    "abbr": "",
+    "stats_key": "Southeast Missouri State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Hawaii": {
+    "aliases": [
+      "Hawai'i",
+      "Hawaii Rainbow Warriors",
+      "Hawaiʻi"
+    ],
+    "abbr": "",
+    "stats_key": "Hawaii",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Arizona State": {
+    "aliases": [
+      "Arizona St"
+    ],
+    "abbr": "",
+    "stats_key": "Arizona State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Penn State": {
+    "aliases": [
+      "Penn St"
+    ],
+    "abbr": "",
+    "stats_key": "Penn State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Texas State": {
+    "aliases": [
+      "Texas State Bobcats"
+    ],
+    "abbr": "",
+    "stats_key": "Texas State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Duquesne": {
+    "aliases": [
+      "Duquesne Dukes"
+    ],
+    "abbr": "",
+    "stats_key": "Duquesne",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Bucknell": {
+    "aliases": [
+      "Bucknell Bison"
+    ],
+    "abbr": "",
+    "stats_key": "Bucknell",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Portland State": {
+    "aliases": [
+      "Portland State Vikings"
+    ],
+    "abbr": "",
+    "stats_key": "Portland State",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Northern Arizona": {
+    "aliases": [
+      "Northern Arizona Lumberjacks"
+    ],
+    "abbr": "",
+    "stats_key": "Northern Arizona",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "North Dakota": {
+    "aliases": [
+      "North Dakota Fighting Hawks"
+    ],
+    "abbr": "",
+    "stats_key": "North Dakota",
+    "PF": null,
+    "PA": null,
+    "PPG": null
+  },
+  "Chattanooga": {
+    "aliases": [
+      "Chattanooga Mocs"
+    ],
+    "abbr": "",
+    "stats_key": "Chattanooga",
     "PF": null,
     "PA": null,
     "PPG": null

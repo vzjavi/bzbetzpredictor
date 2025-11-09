@@ -3,7 +3,7 @@ import logging
 import json
 import requests
 import pandas as pd
-from flask import Flask, render_template, request, jsonify, abort, Response, send_from_directory
+from flask import Flask, render_template, request, jsonify, abort, Response, send_from_directory, url_for
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
@@ -517,14 +517,17 @@ def predict_game_totals(league_name):
         predicted_total = round(((pfpg1 + papg1 + pfpg2 + papg2) / 2.0), 1)
 
         predictions.append({
-            "sport": league_name,
-            "team1": name_away,  # away shown on left in your UI
-            "team2": name_home,  # home shown on right
-            "team1_logo": get_team_logo(name_away, league_name),
-            "team2_logo": get_team_logo(name_home, league_name),
-            "predicted_total": predicted_total,
-            "game_time": game_time_local
-        })
+        "sport": league_name,
+        "team1": name_away,  # away on left
+        "team2": name_home,  # home on right
+        "team1_logo": get_team_logo(name_away, league_name),
+        "team2_logo": get_team_logo(name_home, league_name),
+        "predicted_total": predicted_total,
+        "game_time": game_time_local,
+        "display_time": game_time_local.strftime("%I:%M %p") if game_time_local else ""
+     })
+
+
 
     return predictions
 
@@ -565,7 +568,21 @@ def index():
         all_predictions.extend(sport_predictions)
 
     all_predictions = sorted(all_predictions, key=lambda x: x.get("game_time") or datetime.max)
-    return render_template("index.html", predictions=all_predictions, now=datetime.now(LOCAL_TIMEZONE))
+
+    # --- NEW: pass date string, timezone name, and your header logo ---
+    local_now = datetime.now(LOCAL_TIMEZONE)
+    date_str = local_now.strftime("%B %d, %Y")                     # e.g., "November 09, 2025"
+    tz_name = local_now.tzname() or "CST"                          # "CST" / "CDT" etc.
+    logo_url = url_for("static", filename="XHE1qwUp_400x400.jpg")  # your logo file in /static
+
+    return render_template(
+        "index.html",
+        predictions=all_predictions,
+        date_str=date_str,
+        tz_name=tz_name,
+        logo_url=logo_url,
+    )
+
 
 if __name__ == "__main__":
     print("📊 Running ESPN scraper manually on startup...")

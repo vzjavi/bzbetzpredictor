@@ -56,6 +56,7 @@ sheet_data_cache = {}   # {league_tab: (fetched_at_datetime, DataFrame)}
 CACHE_TTL = timedelta(minutes=2)
 
 LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
+SPORTSDB_TIMEZONE = pytz.timezone("Europe/London")
 
 NCAAF_MAP_PATH = os.path.join(os.path.dirname(__file__), "ncaaf_team_mapping.json")
 try:
@@ -71,7 +72,7 @@ TEAM_ALIASES = {
     "Chicago Bulls": "Bulls",
     "Cleveland Cavaliers": "Cavaliers",
     "Boston Celtics": "Celtics",
-    "Los Angeles Clippers": "Clippers",
+    "Los Angeles Clippers": "LA Clippers",  
     "Memphis Grizzlies": "Grizzlies",
     "Atlanta Hawks": "Hawks",
     "Miami Heat": "Heat",
@@ -80,6 +81,7 @@ TEAM_ALIASES = {
     "Sacramento Kings": "Kings",
     "New York Knicks": "Knicks",
     "Los Angeles Lakers": "Lakers",
+    "LA Lakers": "Lakers",   
     "Orlando Magic": "Magic",
     "Dallas Mavericks": "Mavericks",
     "Brooklyn Nets": "Nets",
@@ -355,12 +357,23 @@ def get_todays_games(league_name):
         def is_game_today(game):
             if not game.get("dateEvent") or not game.get("strTime"):
                 return False
+
             dt_str = f"{game['dateEvent']} {game['strTime']}"
             try:
-                game_dt_utc = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
-                return game_dt_utc.astimezone(LOCAL_TIMEZONE).date() == today_local
-            except Exception:
+                naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+
+                if league_name == "NCAAF":
+                    # NCAAF dates we synthesize from ESPN helpers are in UTC
+                    game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
+                else:
+                    # TheSportsDB uses Europe/London for dateEvent/strTime
+                    game_dt_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
+
+                return game_dt_local.date() == today_local
+            except Exception as e:
+                logging.warning(f"Could not parse/convert schedule time '{dt_str}' for {league_name}: {e}")
                 return False
+
 
         sportsdb_games = [g for g in raw_events if is_game_today(g)]
     except Exception as e:
@@ -494,10 +507,18 @@ def predict_game_totals(league_name):
         if game.get("dateEvent") and game.get("strTime"):
             dt_str = f"{game['dateEvent']} {game['strTime']}"
             try:
-                utc_time = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
-                game_time_local = utc_time.astimezone(LOCAL_TIMEZONE)
+                naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+
+                if league_name == "NCAAF":
+                    # Keep existing behavior for NCAAF (UTC source)
+                    utc_time = pytz.utc.localize(naive)
+                    game_time_local = utc_time.astimezone(LOCAL_TIMEZONE)
+                else:
+                    # Convert from TheSportsDB’s London time to Central
+                    game_time_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
             except Exception as e:
                 logging.warning(f"Could not parse/convert time: {dt_str} — {e}")
+
 
         name_home, row_home = _find_row(home_raw)
         name_away, row_away = _find_row(away_raw)

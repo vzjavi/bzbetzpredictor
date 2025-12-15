@@ -3,16 +3,7 @@ import logging
 import json
 import requests
 import pandas as pd
-from flask import (
-    Flask,
-    render_template,
-    request,
-    jsonify,
-    abort,
-    Response,
-    send_from_directory,
-    url_for,
-)
+from flask import Flask, render_template, request, jsonify, abort, Response, send_from_directory, url_for
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
@@ -61,11 +52,11 @@ HTTP_HEADERS = {
 }
 
 # Sheets read cache
-sheet_data_cache = {}  # {league_tab: (fetched_at_datetime, DataFrame)}
+sheet_data_cache = {}   # {league_tab: (fetched_at_datetime, DataFrame)}
 CACHE_TTL = timedelta(minutes=2)
 
 LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
-SPORTSDB_TIMEZONE = pytz.utc  # TheSportsDB provides UTC/local fields; prefer UTC timestamp when available
+SPORTSDB_TIMEZONE = pytz.timezone("Europe/London")
 
 NCAAF_MAP_PATH = os.path.join(os.path.dirname(__file__), "ncaaf_team_mapping.json")
 try:
@@ -81,7 +72,7 @@ TEAM_ALIASES = {
     "Chicago Bulls": "Bulls",
     "Cleveland Cavaliers": "Cavaliers",
     "Boston Celtics": "Celtics",
-    "Los Angeles Clippers": "LA Clippers",
+    "Los Angeles Clippers": "LA Clippers",  
     "Memphis Grizzlies": "Grizzlies",
     "Atlanta Hawks": "Hawks",
     "Miami Heat": "Heat",
@@ -90,7 +81,7 @@ TEAM_ALIASES = {
     "Sacramento Kings": "Kings",
     "New York Knicks": "Knicks",
     "Los Angeles Lakers": "Lakers",
-    "LA Lakers": "Lakers",
+    "LA Lakers": "Lakers",   
     "Orlando Magic": "Magic",
     "Dallas Mavericks": "Mavericks",
     "Brooklyn Nets": "Nets",
@@ -165,7 +156,6 @@ NCAAF_NAME_ALIASES = {
     "LIU": "Long Island",
 }
 
-
 def _normalize_college_name(name: str) -> str:
     s = name.strip()
     if s in NCAAF_NAME_ALIASES:
@@ -177,7 +167,6 @@ def _normalize_college_name(name: str) -> str:
     s = re.sub(r"\s+University$", "", s, flags=re.I)
     s = re.sub(r"\bSt\.?\b", "State", s, flags=re.I)
     return s.strip()
-
 
 def _ncaaf_variants(name: str):
     base = name.strip()
@@ -196,7 +185,6 @@ def _ncaaf_variants(name: str):
     if len(tokens) >= 3:
         variants.add(" ".join(tokens[:2]))
     return [v for v in variants if v]
-
 
 # ----------------------------------------------------------------------------- #
 # Google Sheets
@@ -248,149 +236,73 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
     sheet_data_cache[league_tab] = (now, df.copy())
     return df
 
-
-# ----------------------------------------------------------------------------- #
-# Time helpers
-# ----------------------------------------------------------------------------- #
-def _sportsdb_event_to_local_datetime(game: dict):
-    """
-    TheSportsDB sometimes provides:
-      - strTimestamp (UTC, best)
-      - dateEvent + strTime (can be local/UTC-ish depending on feed)
-    We prefer strTimestamp, then fallback safely.
-    """
-    ts = game.get("strTimestamp")
-    if ts:
-        try:
-            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = pytz.utc.localize(dt)
-            return dt.astimezone(LOCAL_TIMEZONE)
-        except Exception:
-            pass
-
-    date_part = game.get("dateEvent")
-    time_part = game.get("strTime")
-    if date_part and time_part:
-        try:
-            naive = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M:%S")
-            # Treat fallback as local to keep ordering stable in UI
-            return LOCAL_TIMEZONE.localize(naive)
-        except Exception:
-            return None
-
-    return None
-
-
 # ----------------------------------------------------------------------------- #
 # Schedules: SportsDB primary + ESPN fallback (NCAAF)
 # ----------------------------------------------------------------------------- #
-def _espn_ncaaf_from_site_scoreboard(ymd: str) -> list[dict]:
-    """Fetch NCAAF games for a single day from ESPN's site scoreboard.
-
-    ESPN expects dates in YYYYMMDD. We convert UTC → LOCAL, then enforce the local date
-    so you don't get extra bowls from adjacent dates.
-    """
-    url = (
-        "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
-        f"?dates={ymd}"
-    )
-    out: list[dict] = []
+def _espn_ncaaf_from_site_scoreboard(ymd) -> list:
+    url = f"https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates={ymd}"
     try:
         r = requests.get(url, headers=HTTP_HEADERS, timeout=20)
         if r.status_code != 200:
             logging.warning(f"ESPN site scoreboard {r.status_code}: {url}")
-            return out
-
-        data = r.json() or {}
+            return []
+        data = r.json()
         events = data.get("events") or []
-
+        out = []
         for ev in events:
-            comps = ev.get("competitions") or []
+            comps = (ev.get("competitions") or [])
             if not comps:
                 continue
-
             comp = comps[0]
             iso_dt = comp.get("date")
-            if not iso_dt:
-                continue
-
-            # Parse UTC -> local
             try:
                 game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
-                game_dt_local = game_dt_utc.astimezone(LOCAL_TIMEZONE)
+                dateEvent = game_dt_utc.date().isoformat()
+                strTime = game_dt_utc.strftime("%H:%M:%S")
             except Exception:
                 continue
-
-            # Enforce the requested date (LOCAL)
-            if game_dt_local.strftime("%Y%m%d") != ymd:
-                continue
-
-            competitors = comp.get("competitors") or []
-            home = next((t for t in competitors if t.get("homeAway") == "home"), None)
-            away = next((t for t in competitors if t.get("homeAway") == "away"), None)
+            teams = comp.get("competitors") or []
+            home = next((t for t in teams if t.get("homeAway") == "home"), None)
+            away = next((t for t in teams if t.get("homeAway") == "away"), None)
             if not home or not away:
                 continue
-
             home_name = (home.get("team") or {}).get("displayName")
             away_name = (away.get("team") or {}).get("displayName")
             if not home_name or not away_name:
                 continue
-
-            # IMPORTANT: these are LOCAL date/time strings
-            out.append(
-                {
-                    "strHomeTeam": home_name,
-                    "strAwayTeam": away_name,
-                    "dateEvent": game_dt_local.date().isoformat(),
-                    "strTime": game_dt_local.strftime("%H:%M:%S"),
-                }
-            )
-
+            out.append({
+                "strHomeTeam": home_name,
+                "strAwayTeam": away_name,
+                "dateEvent": dateEvent,
+                "strTime": strTime,
+            })
         return out
     except Exception as e:
         logging.warning(f"ESPN site scoreboard failed: {e}")
-        return out
+        return []
 
-
-def _espn_ncaaf_from_core_events(ymd: str) -> list[dict]:
-    """Fallback NCAAF fetch using ESPN core API.
-
-    Still filtered to exactly the requested LOCAL date.
-    """
-    base = (
-        "https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events"
-        f"?dates={ymd}"
-    )
-    out: list[dict] = []
+def _espn_ncaaf_from_core_events(ymd) -> list:
+    base = f"https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events?dates={ymd}"
+    out = []
     try:
         r = requests.get(base, headers=HTTP_HEADERS, timeout=20)
         if r.status_code != 200:
             logging.warning(f"ESPN core events {r.status_code}: {base}")
             return out
-
         items = (r.json() or {}).get("items") or []
         for item in items:
             try:
-                competitions = item.get("competitions") or []
-                comps_ref = (competitions[0] if competitions else {}).get("$ref")
+                comps_ref = (item.get("competitions") or [{}])[0].get("$ref")
                 if not comps_ref:
                     continue
-
                 cr = requests.get(comps_ref, headers=HTTP_HEADERS, timeout=20)
                 if cr.status_code != 200:
                     continue
-                comp = cr.json() or {}
-
+                comp = cr.json()
                 iso_dt = comp.get("date")
-                if not iso_dt:
-                    continue
-
                 game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
-                game_dt_local = game_dt_utc.astimezone(LOCAL_TIMEZONE)
-
-                if game_dt_local.strftime("%Y%m%d") != ymd:
-                    continue
+                dateEvent = game_dt_utc.date().isoformat()
+                strTime = game_dt_utc.strftime("%H:%M:%S")
 
                 competitors = comp.get("competitors") or []
                 home = next((t for t in competitors if t.get("homeAway") == "home"), None)
@@ -398,109 +310,106 @@ def _espn_ncaaf_from_core_events(ymd: str) -> list[dict]:
                 if not home or not away:
                     continue
 
-                home_name = (home.get("team") or {}).get("displayName")
-                away_name = (away.get("team") or {}).get("displayName")
+                def _team_name(team_obj):
+                    tref = (team_obj or {}).get("team", {}).get("$ref")
+                    if tref:
+                        tr = requests.get(tref, headers=HTTP_HEADERS, timeout=20)
+                        if tr.status_code == 200:
+                            return (tr.json() or {}).get("displayName")
+                    return None
+
+                home_name = _team_name(home)
+                away_name = _team_name(away)
                 if not home_name or not away_name:
                     continue
 
-                out.append(
-                    {
-                        "strHomeTeam": home_name,
-                        "strAwayTeam": away_name,
-                        "dateEvent": game_dt_local.date().isoformat(),
-                        "strTime": game_dt_local.strftime("%H:%M:%S"),
-                    }
-                )
+                out.append({
+                    "strHomeTeam": home_name,
+                    "strAwayTeam": away_name,
+                    "dateEvent": dateEvent,
+                    "strTime": strTime,
+                })
             except Exception:
                 continue
     except Exception as e:
         logging.warning(f"ESPN core events failed: {e}")
     return out
 
-
 def get_todays_games(league_name):
-    """Fetch today's games for a league.
-
-    - NCAAF: ESPN scoreboard (SportsDB season feeds can be noisy for college)
-    - Pro leagues: TheSportsDB `eventsday.php` filtered server-side by date + league
-
-    This avoids timezone edge-cases that can cause "junk" games from adjacent days.
-    """
+    league_id = SPORT_LEAGUES[league_name]
     today_local = datetime.now(LOCAL_TIMEZONE).date()
 
-    # NCAAF: use ESPN only
+    # NCAAF: use ESPN only (SportsDB season feed is noisy)
     if league_name == "NCAAF":
         ymd = today_local.strftime("%Y%m%d")
-        games = _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
+        return _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
 
-        # Extra safety: only keep games that match today's LOCAL date
-        iso_today = today_local.isoformat()
-        return [g for g in games if g.get("dateEvent") == iso_today]
-
-    date_str = today_local.isoformat()
-
-    # Preferred: eventsday.php (returns only events on that date for the given league)
-    url_day = (
-        f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsday.php"
-        f"?d={date_str}&l={league_name}"
-    )
-    try:
-        r = requests.get(url_day, timeout=20)
-        if r.status_code == 200:
-            data = r.json() or {}
-            games = data.get("events") or []
-            logging.info(
-                f"{league_name} SportsDB eventsday games for {date_str}: "
-                f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in games]}"
-            )
-            return games
-        logging.warning(f"SportsDB eventsday {r.status_code}: {url_day}")
-    except Exception as e:
-        logging.warning(f"SportsDB eventsday error for {league_name}: {e}")
-
-    # Fallback: eventsseason.php (filter by dateEvent only, no timezone conversion)
     season_map = {
         "NBA": "2025-2026",
         "MLB": "2025",
         "NFL": "2025",
     }
-    season = season_map.get(league_name, str(today_local.year))
+    season = season_map.get(league_name, "2024")
 
-    league_id = SPORT_LEAGUES.get(league_name)
-    if not league_id:
-        return []
-
-    url_season = (
-        f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php"
-        f"?id={league_id}&s={season}"
-    )
-
+    # SportsDB season feed (filter to today's games)
+    url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
     sportsdb_games = []
     try:
-        r = requests.get(url_season, timeout=20)
-        if r.status_code != 200:
-            logging.warning(f"SportsDB eventsseason {r.status_code}: {url_season}")
-            return []
-        data = r.json() or {}
+        r = requests.get(url, timeout=20)
+        data = r.json()
         raw_events = data.get("events") or []
-        sportsdb_games = [g for g in raw_events if g.get("dateEvent") == date_str]
-    except Exception as e:
-        logging.warning(f"SportsDB eventsseason error for {league_name}: {e}")
 
-    logging.info(
-        f"{league_name} SportsDB eventsseason filtered games for {date_str}: "
-        f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in sportsdb_games]}"
-    )
+        def is_game_today(game):
+            if not game.get("dateEvent") or not game.get("strTime"):
+                return False
+
+            dt_str = f"{game['dateEvent']} {game['strTime']}"
+            try:
+                naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+
+                if league_name == "NCAAF":
+                    # NCAAF dates we synthesize from ESPN helpers are in UTC
+                    game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
+                else:
+                    # TheSportsDB uses Europe/London for dateEvent/strTime
+                    game_dt_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
+
+                return game_dt_local.date() == today_local
+            except Exception as e:
+                logging.warning(f"Could not parse/convert schedule time '{dt_str}' for {league_name}: {e}")
+                return False
+
+
+        sportsdb_games = [g for g in raw_events if is_game_today(g)]
+    except Exception as e:
+        logging.warning(f"SportsDB error for {league_name}: {e}")
+
+    logging.info(f"{league_name} SportsDB games for today: "
+                 f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in sportsdb_games]}")
+
+    # ESPN fallback for NCAAF only
+    if league_name == "NCAAF":
+        ymd = today_local.strftime("%Y%m%d")
+        espn_games = _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
+        logging.info(f"NCAAF ESPN games for today: "
+                     f"{[(g['strAwayTeam'], g['strHomeTeam']) for g in espn_games]}")
+        existing = {(g.get("strAwayTeam"), g.get("strHomeTeam")) for g in sportsdb_games}
+        for g in espn_games:
+            key = (g["strAwayTeam"], g["strHomeTeam"])
+            if key not in existing:
+                sportsdb_games.append(g)
+                existing.add(key)
 
     return sportsdb_games
-
 
 # ----------------------------------------------------------------------------- #
 # Matching helpers — STRICT (no fuzzy). If a team isn't an exact match in the
 # Google Sheet, the matchup is skipped.
 # ----------------------------------------------------------------------------- #
 def _pro_strict_match(team_name: str, team_list: list) -> str | None:
-    """For NBA/MLB/NFL: exact team name or exact alias only."""
+    """
+    For NBA/MLB/NFL: exact team name or exact alias only.
+    """
     if team_name in team_list:
         return team_name
     alias = TEAM_ALIASES.get(team_name)
@@ -508,17 +417,15 @@ def _pro_strict_match(team_name: str, team_list: list) -> str | None:
         return alias
     return None
 
-
 def _ncaaf_strict_match(raw_name: str, team_list: list, stats_df: pd.DataFrame):
-    """Resolver-first; then try normalized variants — but **no fuzzy**.
+    """
+    Resolver-first; then try a few normalized variants — but **no fuzzy**.
     Returns (matched_name, row) or (None, None).
     """
     # 1) use resolver (lets your Miami guardrails etc. take effect)
     try:
         primary, stats_key = resolve_team(raw_name, ncaaf_map, sheet_names=team_list)
-        logging.info(
-            f"[NCAAF resolver] raw='{raw_name}' → primary='{primary}', stats_key='{stats_key}'"
-        )
+        logging.info(f"[NCAAF resolver] raw='{raw_name}' → primary='{primary}', stats_key='{stats_key}'")
         for cand in (stats_key, primary):
             if cand and cand in team_list:
                 try:
@@ -539,17 +446,13 @@ def _ncaaf_strict_match(raw_name: str, team_list: list, stats_df: pd.DataFrame):
     logging.info(f"⛔ NCAAF strict drop — no exact Sheet match for '{raw_name}'")
     return None, None
 
-
 def get_team_logo(team_short_name, sport):
-    full_name = next(
-        (k for k, v in TEAM_ALIASES.items() if v == team_short_name), team_short_name
-    )
+    full_name = next((k for k, v in TEAM_ALIASES.items() if v == team_short_name), team_short_name)
     try:
         return logo_data.get(sport, {}).get(full_name, None)
     except Exception as e:
         logging.warning(f"Logo lookup failed for {team_short_name}: {e}")
         return None
-
 
 # ----------------------------------------------------------------------------- #
 # Prediction pipeline
@@ -590,7 +493,6 @@ def predict_game_totals(league_name):
     def _find_row(team_name):
         if league_name == "NCAAF":
             return _ncaaf_strict_match(team_name, team_list, stats_df)
-
         # Pro leagues: strict alias-or-exact only
         match = _pro_strict_match(team_name, team_list)
         if not match:
@@ -607,17 +509,21 @@ def predict_game_totals(league_name):
 
         # Parse & localize time
         game_time_local = None
-        if league_name == "NCAAF":
-            # ESPN helpers already returned LOCAL dateEvent/strTime
-            if game.get("dateEvent") and game.get("strTime"):
-                dt_str = f"{game['dateEvent']} {game['strTime']}"
-                try:
-                    naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-                    game_time_local = LOCAL_TIMEZONE.localize(naive)
-                except Exception as e:
-                    logging.warning(f"Could not parse local time: {dt_str} — {e}")
-        else:
-            game_time_local = _sportsdb_event_to_local_datetime(game)
+        if game.get("dateEvent") and game.get("strTime"):
+            dt_str = f"{game['dateEvent']} {game['strTime']}"
+            try:
+                naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+
+                if league_name == "NCAAF":
+                    # Keep existing behavior for NCAAF (UTC source)
+                    utc_time = pytz.utc.localize(naive)
+                    game_time_local = utc_time.astimezone(LOCAL_TIMEZONE)
+                else:
+                    # Convert from TheSportsDB’s London time to Central
+                    game_time_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
+            except Exception as e:
+                logging.warning(f"Could not parse/convert time: {dt_str} — {e}")
+
 
         name_home, row_home = _find_row(home_raw)
         name_away, row_away = _find_row(away_raw)
@@ -636,21 +542,20 @@ def predict_game_totals(league_name):
         pfpg2, papg2 = _per_game(row_away)
         predicted_total = round(((pfpg1 + papg1 + pfpg2 + papg2) / 2.0), 1)
 
-        predictions.append(
-            {
-                "sport": league_name,
-                "team1": name_away,  # away on left
-                "team2": name_home,  # home on right
-                "team1_logo": get_team_logo(name_away, league_name),
-                "team2_logo": get_team_logo(name_home, league_name),
-                "predicted_total": predicted_total,
-                "game_time": game_time_local,
-                "display_time": game_time_local.strftime("%I:%M %p") if game_time_local else "",
-            }
-        )
+        predictions.append({
+        "sport": league_name,
+        "team1": name_away,  # away on left
+        "team2": name_home,  # home on right
+        "team1_logo": get_team_logo(name_away, league_name),
+        "team2_logo": get_team_logo(name_home, league_name),
+        "predicted_total": predicted_total,
+        "game_time": game_time_local,
+        "display_time": game_time_local.strftime("%I:%M %p") if game_time_local else ""
+     })
+
+
 
     return predictions
-
 
 # ----------------------------------------------------------------------------- #
 # Admin endpoints
@@ -661,13 +566,11 @@ def _check_admin_token():
     if not expected or got != expected:
         abort(401)
 
-
 @app.post("/admin/daily")
 def admin_daily():
     _check_admin_token()
     summary = run_scraper()
     return jsonify({"ok": True, "summary": summary, "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat()})
-
 
 @app.get("/admin/daily")
 def admin_daily_get():
@@ -675,11 +578,9 @@ def admin_daily_get():
     summary = run_scraper()
     return jsonify({"ok": True, "summary": summary, "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat()})
 
-
 @app.get("/admin/health")
 def admin_health():
     return jsonify({"ok": True, "time": datetime.now(LOCAL_TIMEZONE).isoformat()})
-
 
 # ----------------------------------------------------------------------------- #
 # UI
@@ -694,10 +595,11 @@ def index():
 
     all_predictions = sorted(all_predictions, key=lambda x: x.get("game_time") or datetime.max)
 
+    # --- NEW: pass date string, timezone name, and your header logo ---
     local_now = datetime.now(LOCAL_TIMEZONE)
-    date_str = local_now.strftime("%B %d, %Y")  # e.g., "December 15, 2025"
-    tz_name = local_now.tzname() or "CST"       # "CST" / "CDT"
-    logo_url = url_for("static", filename="XHE1qwUp_400x400.jpg")
+    date_str = local_now.strftime("%B %d, %Y")                     # e.g., "November 09, 2025"
+    tz_name = local_now.tzname() or "CST"                          # "CST" / "CDT" etc.
+    logo_url = url_for("static", filename="XHE1qwUp_400x400.jpg")  # your logo file in /static
 
     return render_template(
         "index.html",
@@ -708,21 +610,16 @@ def index():
     )
 
 
-# Robots + favicon (IMPORTANT: define these BEFORE app.run)
-@app.route("/robots.txt")
-def robots_txt():
-    return Response("User-agent: *\nDisallow:", mimetype="text/plain")
-
-
-@app.route("/favicon.ico")
-def favicon():
-    return send_from_directory("static", "favicon.ico", mimetype="image/x-icon")
-
-
-# ----------------------------------------------------------------------------- #
-# Main
-# ----------------------------------------------------------------------------- #
 if __name__ == "__main__":
     print("📊 Running ESPN scraper manually on startup...")
     run_scraper()
     app.run(host="0.0.0.0", port=5000)
+
+# Robots + favicon
+@app.route("/robots.txt")
+def robots_txt():
+    return Response("User-agent: *\nDisallow:", mimetype="text/plain")
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory("static", "favicon.ico", mimetype="image/x-icon")

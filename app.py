@@ -56,7 +56,7 @@ sheet_data_cache = {}   # {league_tab: (fetched_at_datetime, DataFrame)}
 CACHE_TTL = timedelta(minutes=2)
 
 LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
-SPORTSDB_TIMEZONE = pytz.timezone("Europe/London")
+SPORTSDB_TIMEZONE = pytz.utc  # TheSportsDB provides UTC/local fields; prefer UTC timestamp when available
 
 NCAAF_MAP_PATH = os.path.join(os.path.dirname(__file__), "ncaaf_team_mapping.json")
 try:
@@ -335,72 +335,109 @@ def _espn_ncaaf_from_core_events(ymd) -> list:
         logging.warning(f"ESPN core events failed: {e}")
     return out
 
+
+
+def _sportsdb_event_to_local_datetime(game: dict):
+    """Best-effort parse of a TheSportsDB event time into America/Chicago.
+
+    Prefer `strTimestamp` (UTC). Fall back to `dateEvent` + `strTime` if needed.
+    Returns a tz-aware datetime in LOCAL_TIMEZONE, or None.
+    """
+    # Preferred: explicit timestamp (usually UTC)
+    ts = game.get("strTimestamp") or game.get("strTimestampUTC")
+    if ts:
+        # Common formats: "YYYY-MM-DD HH:MM:SS" or ISO "YYYY-MM-DDTHH:MM:SSZ"
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
+            try:
+                if fmt.endswith('%z'):
+                    dt = __import__('datetime').datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                    if dt.tzinfo is None:
+                        dt = pytz.utc.localize(dt)
+                else:
+                    naive = datetime.strptime(ts, fmt)
+                    dt = pytz.utc.localize(naive)
+                return dt.astimezone(LOCAL_TIMEZONE)
+            except Exception:
+                continue
+        # last-chance ISO parse
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                dt = pytz.utc.localize(dt)
+            return dt.astimezone(LOCAL_TIMEZONE)
+        except Exception:
+            pass
+
+    # Fallback: dateEvent + strTime
+    if game.get("dateEvent") and game.get("strTime"):
+        dt_str = f"{game['dateEvent']} {game['strTime']}"
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                naive = datetime.strptime(dt_str, fmt)
+                # Treat as UTC; if TSDB returns local time here, display may be off but game selection stays correct.
+                return pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
+            except Exception:
+                continue
+
+    return None
+
 def get_todays_games(league_name):
-    league_id = SPORT_LEAGUES[league_name]
+    """Fetch today's games for a league.
+
+    - NCAAF: ESPN scoreboard (SportsDB season feeds can be noisy for college)
+    - Pro leagues: TheSportsDB `eventsday.php` filtered server-side by date + league
+
+    This avoids timezone edge-cases that can cause "junk" games from adjacent days.
+    """
     today_local = datetime.now(LOCAL_TIMEZONE).date()
 
-    # NCAAF: use ESPN only (SportsDB season feed is noisy)
+    # NCAAF: use ESPN only
     if league_name == "NCAAF":
         ymd = today_local.strftime("%Y%m%d")
         return _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
 
+    date_str = today_local.isoformat()
+
+    # Preferred: eventsday.php (returns only events on that date for the given league)
+    url_day = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsday.php?d={date_str}&l={league_name}"
+    try:
+        r = requests.get(url_day, timeout=20)
+        if r.status_code == 200:
+            data = r.json() or {}
+            games = data.get("events") or []
+            logging.info(f"{league_name} SportsDB eventsday games for {date_str}: "
+                         f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in games]}")
+            return games
+        logging.warning(f"SportsDB eventsday {r.status_code}: {url_day}")
+    except Exception as e:
+        logging.warning(f"SportsDB eventsday error for {league_name}: {e}")
+
+    # Fallback: eventsseason.php (filter by dateEvent only, no timezone conversion)
     season_map = {
         "NBA": "2025-2026",
         "MLB": "2025",
         "NFL": "2025",
     }
-    season = season_map.get(league_name, "2024")
+    season = season_map.get(league_name, str(today_local.year))
+    url_season = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={SPORT_LEAGUES[league_name]}&s={season}"
 
-    # SportsDB season feed (filter to today's games)
-    url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
     sportsdb_games = []
     try:
-        r = requests.get(url, timeout=20)
-        data = r.json()
+        r = requests.get(url_season, timeout=20)
+        if r.status_code != 200:
+            logging.warning(f"SportsDB eventsseason {r.status_code}: {url_season}")
+            return []
+        data = r.json() or {}
         raw_events = data.get("events") or []
-
-        def is_game_today(game):
-            if not game.get("dateEvent") or not game.get("strTime"):
-                return False
-
-            dt_str = f"{game['dateEvent']} {game['strTime']}"
-            try:
-                naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-
-                if league_name == "NCAAF":
-                    # NCAAF dates we synthesize from ESPN helpers are in UTC
-                    game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
-                else:
-                    # TheSportsDB uses Europe/London for dateEvent/strTime
-                    game_dt_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
-
-                return game_dt_local.date() == today_local
-            except Exception as e:
-                logging.warning(f"Could not parse/convert schedule time '{dt_str}' for {league_name}: {e}")
-                return False
-
-
-        sportsdb_games = [g for g in raw_events if is_game_today(g)]
+        sportsdb_games = [g for g in raw_events if g.get('dateEvent') == date_str]
     except Exception as e:
-        logging.warning(f"SportsDB error for {league_name}: {e}")
+        logging.warning(f"SportsDB eventsseason error for {league_name}: {e}")
 
-    logging.info(f"{league_name} SportsDB games for today: "
+    logging.info(f"{league_name} SportsDB eventsseason filtered games for {date_str}: "
                  f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in sportsdb_games]}")
 
-    # ESPN fallback for NCAAF only
-    if league_name == "NCAAF":
-        ymd = today_local.strftime("%Y%m%d")
-        espn_games = _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
-        logging.info(f"NCAAF ESPN games for today: "
-                     f"{[(g['strAwayTeam'], g['strHomeTeam']) for g in espn_games]}")
-        existing = {(g.get("strAwayTeam"), g.get("strHomeTeam")) for g in sportsdb_games}
-        for g in espn_games:
-            key = (g["strAwayTeam"], g["strHomeTeam"])
-            if key not in existing:
-                sportsdb_games.append(g)
-                existing.add(key)
-
     return sportsdb_games
+
 
 # ----------------------------------------------------------------------------- #
 # Matching helpers — STRICT (no fuzzy). If a team isn't an exact match in the
@@ -506,23 +543,22 @@ def predict_game_totals(league_name):
     for game in games:
         home_raw = game.get("strHomeTeam")
         away_raw = game.get("strAwayTeam")
-
         # Parse & localize time
         game_time_local = None
-        if game.get("dateEvent") and game.get("strTime"):
-            dt_str = f"{game['dateEvent']} {game['strTime']}"
-            try:
-                naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-
-                if league_name == "NCAAF":
-                    # Keep existing behavior for NCAAF (UTC source)
+        if league_name == "NCAAF":
+            # ESPN NCAAF helpers produce UTC date/time strings
+            if game.get("dateEvent") and game.get("strTime"):
+                dt_str = f"{game['dateEvent']} {game['strTime']}"
+                try:
+                    naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
                     utc_time = pytz.utc.localize(naive)
                     game_time_local = utc_time.astimezone(LOCAL_TIMEZONE)
-                else:
-                    # Convert from TheSportsDB’s London time to Central
-                    game_time_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
-            except Exception as e:
-                logging.warning(f"Could not parse/convert time: {dt_str} — {e}")
+                except Exception as e:
+                    logging.warning(f"Could not parse/convert time: {dt_str} — {e}")
+        else:
+            # TheSportsDB: prefer strTimestamp (UTC) when present
+            game_time_local = _sportsdb_event_to_local_datetime(game)
+
 
 
         name_home, row_home = _find_row(home_raw)

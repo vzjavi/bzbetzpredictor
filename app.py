@@ -239,70 +239,109 @@ def fetch_data_from_sheets(league_tab: str) -> pd.DataFrame:
 # ----------------------------------------------------------------------------- #
 # Schedules: SportsDB primary + ESPN fallback (NCAAF)
 # ----------------------------------------------------------------------------- #
-def _espn_ncaaf_from_site_scoreboard(ymd) -> list:
-    url = f"https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates={ymd}"
+def _espn_ncaaf_from_site_scoreboard(ymd: str) -> list[dict]:
+    """Fetch NCAAF games for a single day from ESPN's site scoreboard.
+
+    ESPN expects dates in YYYYMMDD. We also *post-filter* by local date to avoid
+    any week-range quirks or timezone edge cases.
+    """
+    url = (
+        "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
+        f"?dates={ymd}"
+    )
+    out: list[dict] = []
     try:
         r = requests.get(url, headers=HTTP_HEADERS, timeout=20)
         if r.status_code != 200:
             logging.warning(f"ESPN site scoreboard {r.status_code}: {url}")
-            return []
-        data = r.json()
+            return out
+
+        data = r.json() or {}
         events = data.get("events") or []
-        out = []
+
         for ev in events:
-            comps = (ev.get("competitions") or [])
+            comps = ev.get("competitions") or []
             if not comps:
                 continue
+
             comp = comps[0]
             iso_dt = comp.get("date")
+            if not iso_dt:
+                continue
+
+            # Parse UTC -> local
             try:
                 game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
-                dateEvent = game_dt_utc.date().isoformat()
-                strTime = game_dt_utc.strftime("%H:%M:%S")
+                game_dt_local = game_dt_utc.astimezone(LOCAL_TIMEZONE)
             except Exception:
                 continue
-            teams = comp.get("competitors") or []
-            home = next((t for t in teams if t.get("homeAway") == "home"), None)
-            away = next((t for t in teams if t.get("homeAway") == "away"), None)
+
+            # Enforce the requested date (local)
+            if game_dt_local.strftime("%Y%m%d") != ymd:
+                continue
+
+            competitors = comp.get("competitors") or []
+            home = next((t for t in competitors if t.get("homeAway") == "home"), None)
+            away = next((t for t in competitors if t.get("homeAway") == "away"), None)
             if not home or not away:
                 continue
+
             home_name = (home.get("team") or {}).get("displayName")
             away_name = (away.get("team") or {}).get("displayName")
             if not home_name or not away_name:
                 continue
+
             out.append({
                 "strHomeTeam": home_name,
                 "strAwayTeam": away_name,
-                "dateEvent": dateEvent,
-                "strTime": strTime,
+                "dateEvent": game_dt_local.date().isoformat(),
+                "strTime": game_dt_local.strftime("%H:%M:%S"),
             })
+
         return out
     except Exception as e:
         logging.warning(f"ESPN site scoreboard failed: {e}")
-        return []
+        return out
 
-def _espn_ncaaf_from_core_events(ymd) -> list:
-    base = f"https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events?dates={ymd}"
-    out = []
+
+def _espn_ncaaf_from_core_events(ymd: str) -> list[dict]:
+    """Fallback NCAAF fetch using ESPN core API.
+
+    Kept as a fallback in case the site scoreboard changes. Still filtered to
+    exactly the requested local date.
+    """
+    base = (
+        "https://sports.core.api.espn.com/v2/sports/football/leagues/college-football/events"
+        f"?dates={ymd}"
+    )
+    out: list[dict] = []
     try:
         r = requests.get(base, headers=HTTP_HEADERS, timeout=20)
         if r.status_code != 200:
             logging.warning(f"ESPN core events {r.status_code}: {base}")
             return out
+
         items = (r.json() or {}).get("items") or []
         for item in items:
             try:
-                comps_ref = (item.get("competitions") or [{}])[0].get("$ref")
+                competitions = item.get("competitions") or []
+                comps_ref = (competitions[0] if competitions else {}).get("$ref")
                 if not comps_ref:
                     continue
+
                 cr = requests.get(comps_ref, headers=HTTP_HEADERS, timeout=20)
                 if cr.status_code != 200:
                     continue
-                comp = cr.json()
+                comp = cr.json() or {}
+
                 iso_dt = comp.get("date")
+                if not iso_dt:
+                    continue
                 game_dt_utc = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
-                dateEvent = game_dt_utc.date().isoformat()
-                strTime = game_dt_utc.strftime("%H:%M:%S")
+                game_dt_local = game_dt_utc.astimezone(LOCAL_TIMEZONE)
+
+                if game_dt_local.strftime("%Y%m%d") != ymd:
+                    continue
 
                 competitors = comp.get("competitors") or []
                 home = next((t for t in competitors if t.get("homeAway") == "home"), None)
@@ -310,24 +349,16 @@ def _espn_ncaaf_from_core_events(ymd) -> list:
                 if not home or not away:
                     continue
 
-                def _team_name(team_obj):
-                    tref = (team_obj or {}).get("team", {}).get("$ref")
-                    if tref:
-                        tr = requests.get(tref, headers=HTTP_HEADERS, timeout=20)
-                        if tr.status_code == 200:
-                            return (tr.json() or {}).get("displayName")
-                    return None
-
-                home_name = _team_name(home)
-                away_name = _team_name(away)
+                home_name = (home.get("team") or {}).get("displayName")
+                away_name = (away.get("team") or {}).get("displayName")
                 if not home_name or not away_name:
                     continue
 
                 out.append({
                     "strHomeTeam": home_name,
                     "strAwayTeam": away_name,
-                    "dateEvent": dateEvent,
-                    "strTime": strTime,
+                    "dateEvent": game_dt_local.date().isoformat(),
+                    "strTime": game_dt_local.strftime("%H:%M:%S"),
                 })
             except Exception:
                 continue
@@ -335,51 +366,6 @@ def _espn_ncaaf_from_core_events(ymd) -> list:
         logging.warning(f"ESPN core events failed: {e}")
     return out
 
-
-
-def _sportsdb_event_to_local_datetime(game: dict):
-    """Best-effort parse of a TheSportsDB event time into America/Chicago.
-
-    Prefer `strTimestamp` (UTC). Fall back to `dateEvent` + `strTime` if needed.
-    Returns a tz-aware datetime in LOCAL_TIMEZONE, or None.
-    """
-    # Preferred: explicit timestamp (usually UTC)
-    ts = game.get("strTimestamp") or game.get("strTimestampUTC")
-    if ts:
-        # Common formats: "YYYY-MM-DD HH:MM:SS" or ISO "YYYY-MM-DDTHH:MM:SSZ"
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
-            try:
-                if fmt.endswith('%z'):
-                    dt = __import__('datetime').datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                    if dt.tzinfo is None:
-                        dt = pytz.utc.localize(dt)
-                else:
-                    naive = datetime.strptime(ts, fmt)
-                    dt = pytz.utc.localize(naive)
-                return dt.astimezone(LOCAL_TIMEZONE)
-            except Exception:
-                continue
-        # last-chance ISO parse
-        try:
-            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-            if dt.tzinfo is None:
-                dt = pytz.utc.localize(dt)
-            return dt.astimezone(LOCAL_TIMEZONE)
-        except Exception:
-            pass
-
-    # Fallback: dateEvent + strTime
-    if game.get("dateEvent") and game.get("strTime"):
-        dt_str = f"{game['dateEvent']} {game['strTime']}"
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-            try:
-                naive = datetime.strptime(dt_str, fmt)
-                # Treat as UTC; if TSDB returns local time here, display may be off but game selection stays correct.
-                return pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
-            except Exception:
-                continue
-
-    return None
 
 def get_todays_games(league_name):
     """Fetch today's games for a league.
@@ -394,7 +380,10 @@ def get_todays_games(league_name):
     # NCAAF: use ESPN only
     if league_name == "NCAAF":
         ymd = today_local.strftime("%Y%m%d")
-        return _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
+        games = _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
+        # Extra safety: only keep games that match today's local date
+        iso_today = today_local.isoformat()
+        return [g for g in games if g.get("dateEvent") == iso_today]
 
     date_str = today_local.isoformat()
 

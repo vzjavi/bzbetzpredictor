@@ -338,6 +338,12 @@ def _espn_ncaaf_from_core_events(ymd) -> list:
 def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
     today_local = datetime.now(LOCAL_TIMEZONE).date()
+
+    # NCAAF: use ESPN only (SportsDB season feed is noisy)
+    if league_name == "NCAAF":
+        ymd = today_local.strftime("%Y%m%d")
+        return _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
+
     season_map = {
         "NBA": "2025-2026",
         "MLB": "2025",

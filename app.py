@@ -339,11 +339,42 @@ def get_todays_games(league_name):
     league_id = SPORT_LEAGUES[league_name]
     today_local = datetime.now(LOCAL_TIMEZONE).date()
 
-    # NCAAF: use ESPN only (SportsDB season feed is noisy)
+    def _is_game_today_local(game, source_is_utc: bool) -> bool:
+        """Return True if this game's kickoff time resolves to today's LOCAL date."""
+        if not game.get("dateEvent") or not game.get("strTime"):
+            return False
+
+        dt_str = f"{game['dateEvent']} {game['strTime']}"
+        try:
+            naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+            if source_is_utc:
+                game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
+            else:
+                game_dt_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
+            return game_dt_local.date() == today_local
+        except Exception as e:
+            logging.warning(f"Could not parse/convert schedule time '{dt_str}' for {league_name}: {e}")
+            return False
+
+    # ------------------------------------------------------------------ #
+    # NCAAF: use ESPN only, BUT still filter to today's local date.
+    # ESPN scoreboards sometimes include events around midnight UTC that
+    # do not belong to the local day; this guarantees the UI shows only
+    # today's games in America/Chicago.
+    # ------------------------------------------------------------------ #
     if league_name == "NCAAF":
         ymd = today_local.strftime("%Y%m%d")
-        return _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
+        espn_games = _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
+        espn_games_today = [g for g in espn_games if _is_game_today_local(g, source_is_utc=True)]
+        logging.info(
+            f"NCAAF ESPN games for today (local): "
+            f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in espn_games_today]}"
+        )
+        return espn_games_today
 
+    # ------------------------------------------------------------------ #
+    # Pro leagues: SportsDB season feed (filter to today's games)
+    # ------------------------------------------------------------------ #
     season_map = {
         "NBA": "2025-2026",
         "MLB": "2025",
@@ -351,55 +382,20 @@ def get_todays_games(league_name):
     }
     season = season_map.get(league_name, "2024")
 
-    # SportsDB season feed (filter to today's games)
     url = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsseason.php?id={league_id}&s={season}"
     sportsdb_games = []
     try:
         r = requests.get(url, timeout=20)
         data = r.json()
         raw_events = data.get("events") or []
-
-        def is_game_today(game):
-            if not game.get("dateEvent") or not game.get("strTime"):
-                return False
-
-            dt_str = f"{game['dateEvent']} {game['strTime']}"
-            try:
-                naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-
-                if league_name == "NCAAF":
-                    # NCAAF dates we synthesize from ESPN helpers are in UTC
-                    game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
-                else:
-                    # TheSportsDB uses Europe/London for dateEvent/strTime
-                    game_dt_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
-
-                return game_dt_local.date() == today_local
-            except Exception as e:
-                logging.warning(f"Could not parse/convert schedule time '{dt_str}' for {league_name}: {e}")
-                return False
-
-
-        sportsdb_games = [g for g in raw_events if is_game_today(g)]
+        sportsdb_games = [g for g in raw_events if _is_game_today_local(g, source_is_utc=False)]
     except Exception as e:
         logging.warning(f"SportsDB error for {league_name}: {e}")
 
-    logging.info(f"{league_name} SportsDB games for today: "
-                 f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in sportsdb_games]}")
-
-    # ESPN fallback for NCAAF only
-    if league_name == "NCAAF":
-        ymd = today_local.strftime("%Y%m%d")
-        espn_games = _espn_ncaaf_from_site_scoreboard(ymd) or _espn_ncaaf_from_core_events(ymd)
-        logging.info(f"NCAAF ESPN games for today: "
-                     f"{[(g['strAwayTeam'], g['strHomeTeam']) for g in espn_games]}")
-        existing = {(g.get("strAwayTeam"), g.get("strHomeTeam")) for g in sportsdb_games}
-        for g in espn_games:
-            key = (g["strAwayTeam"], g["strHomeTeam"])
-            if key not in existing:
-                sportsdb_games.append(g)
-                existing.add(key)
-
+    logging.info(
+        f"{league_name} SportsDB games for today: "
+        f"{[(g.get('strAwayTeam'), g.get('strHomeTeam')) for g in sportsdb_games]}"
+    )
     return sportsdb_games
 
 # ----------------------------------------------------------------------------- #
@@ -459,6 +455,7 @@ def get_team_logo(team_short_name, sport):
 # ----------------------------------------------------------------------------- #
 def predict_game_totals(league_name):
     predictions = []
+    today_local = datetime.now(LOCAL_TIMEZONE).date()
 
     games = get_todays_games(league_name)
     logging.info(f"{league_name} games fetched: {len(games)}")
@@ -524,6 +521,11 @@ def predict_game_totals(league_name):
             except Exception as e:
                 logging.warning(f"Could not parse/convert time: {dt_str} — {e}")
 
+        # Only show games scheduled for *today* in local time
+        if not game_time_local:
+            continue
+        if game_time_local.date() != today_local:
+            continue
 
         name_home, row_home = _find_row(home_raw)
         name_away, row_away = _find_row(away_raw)
@@ -610,11 +612,6 @@ def index():
     )
 
 
-if __name__ == "__main__":
-    print("📊 Running ESPN scraper manually on startup...")
-    run_scraper()
-    app.run(host="0.0.0.0", port=5000)
-
 # Robots + favicon
 @app.route("/robots.txt")
 def robots_txt():
@@ -623,3 +620,9 @@ def robots_txt():
 @app.route("/favicon.ico")
 def favicon():
     return send_from_directory("static", "favicon.ico", mimetype="image/x-icon")
+
+
+if __name__ == "__main__":
+    print("📊 Running ESPN scraper manually on startup...")
+    run_scraper()
+    app.run(host="0.0.0.0", port=5000)

@@ -1,0 +1,16 @@
+# BZ Betz Predictor
+
+A sports betting predictor web app focused on over/under totals for NBA, MLB, NFL, and NCAAF.
+
+## Notice
+This repository is public for portfolio/demo purposes only.  
+Copyright © 2026 Ryan Grace. All rights reserved.  
+No permission is granted to copy, reuse, modify, or distribute this code without written permission.
+
+## Tech Stack
+- Python
+- Flask
+- JavaScript
+- HTML/CSS
+- External sports APIs
+- Google Sheets integration

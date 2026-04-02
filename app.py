@@ -377,8 +377,8 @@ def get_todays_games(league_name):
     # ------------------------------------------------------------------ #
     season_map = {
         "NBA": "2025-2026",
-        "MLB": "2025",
-        "NFL": "2025",
+        "MLB": "2026",
+        "NFL": "2026",
     }
     season = season_map.get(league_name, "2024")
 

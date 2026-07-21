@@ -1,0 +1,48 @@
+name: Fix SportsDB timezone
+
+on:
+  push:
+    paths:
+      - ".github/workflows/fix-sportsdb-timezone.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-timezone:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Fix TheSportsDB time conversion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("app.py")
+          content = path.read_text(encoding="utf-8")
+
+          replacements = {
+              'SPORTSDB_TIMEZONE = pytz.timezone("Europe/London")': 'SPORTSDB_TIMEZONE = pytz.utc',
+              "game_dt_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)": "game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)",
+              "# Convert from TheSportsDB’s London time to Central": "# TheSportsDB strTime is UTC; convert it to Central",
+          }
+
+          for old, new in replacements.items():
+              if old not in content:
+                  raise SystemExit(f"Expected text not found: {old}")
+              content = content.replace(old, new)
+
+          path.write_text(content, encoding="utf-8")
+          PY
+
+      - name: Commit the fix and remove this temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py
+          git rm .github/workflows/fix-sportsdb-timezone.yml
+          git commit -m "Fix SportsDB game times for daylight saving time"
+          git push

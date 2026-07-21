@@ -56,7 +56,7 @@ sheet_data_cache = {}   # {league_tab: (fetched_at_datetime, DataFrame)}
 CACHE_TTL = timedelta(minutes=2)
 
 LOCAL_TIMEZONE = pytz.timezone("America/Chicago")
-SPORTSDB_TIMEZONE = pytz.timezone("Europe/London")
+SPORTSDB_TIMEZONE = pytz.utc
 
 NCAAF_MAP_PATH = os.path.join(os.path.dirname(__file__), "ncaaf_team_mapping.json")
 try:
@@ -350,7 +350,7 @@ def get_todays_games(league_name):
             if source_is_utc:
                 game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
             else:
-                game_dt_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
+                game_dt_local = pytz.utc.localize(naive).astimezone(LOCAL_TIMEZONE)
             return game_dt_local.date() == today_local
         except Exception as e:
             logging.warning(f"Could not parse/convert schedule time '{dt_str}' for {league_name}: {e}")
@@ -516,7 +516,7 @@ def predict_game_totals(league_name):
                     utc_time = pytz.utc.localize(naive)
                     game_time_local = utc_time.astimezone(LOCAL_TIMEZONE)
                 else:
-                    # Convert from TheSportsDB’s London time to Central
+                    # TheSportsDB strTime is UTC; convert it to Central
                     game_time_local = SPORTSDB_TIMEZONE.localize(naive).astimezone(LOCAL_TIMEZONE)
             except Exception as e:
                 logging.warning(f"Could not parse/convert time: {dt_str} — {e}")

@@ -1,16 +1,1 @@
-# Sports Predictor
-
-A sports predictor web app focused on over/under totals for NBA, MLB, NFL, and NCAAF.
-
-## Notice
-This repository is public for portfolio/demo purposes only.  
-Copyright © 2026 Ryan Grace. All rights reserved.  
-No permission is granted to copy, reuse, modify, or distribute this code without written permission.
-
-## Tech Stack
-- Python
-- Flask
-- JavaScript
-- HTML/CSS
-- External sports APIs
-- Google Sheets integration
+Developed a full-stack sports prediction web application focused on over/under totals for NBA, MLB, NFL, and NCAAF games. Built the backend with Python and Flask to collect, process, and compare team statistics from external sports APIs and data sources. Implemented team-name normalization, schedule retrieval, matchup analysis, and automated prediction calculations, with Google Sheets integration for managing statistical data. Designed a responsive web interface using HTML, CSS, and JavaScript to display daily matchups and predicted totals in an easy-to-read format. Deployed the application online and used Git/GitHub for version control and ongoing development.

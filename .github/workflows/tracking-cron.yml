@@ -2,7 +2,9 @@ name: BZ Bets Tracking Cron
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # Four daily checkpoints (UTC) to conserve Odds API credits while still
+    # sampling typical U.S. pregame windows. Adjust if your API plan changes.
+    - cron: "0 16,20,0,3 * * *"
   workflow_dispatch:
 
 jobs:

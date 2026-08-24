@@ -74,7 +74,7 @@ This remains the baseline before adding recent form, starting pitchers, bullpen 
 
 ## Scheduled tracking
 
-The repository includes `.github/workflows/tracking-cron.yml`. It runs every 30 minutes but safely exits without doing anything until two GitHub Actions repository secrets are configured:
+The repository includes `.github/workflows/tracking-cron.yml`. By default it uses four UTC checkpoints per day to conserve Odds API credits while still sampling common U.S. pregame windows. It safely exits without doing anything until two GitHub Actions repository secrets are configured:
 
 - `BZ_BETS_URL` — the deployed BZ Bets base URL, for example `https://your-service.onrender.com`
 - `BZ_BETS_ADMIN_TOKEN` — the same value used for the Render `ADMIN_TOKEN` environment variable

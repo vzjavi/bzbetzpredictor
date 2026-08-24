@@ -34,7 +34,7 @@
         <label class="sr-only" for="searchInput">Search by team name</label>
         <div class="search">
           <svg aria-hidden="true" viewBox="0 0 24 24" class="search-icon"><path d="M21 21l-4.3-4.3m2.1-5.4a7.5 7.5 0 11-15 0 7.5 7.5 0 0115 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <input id="searchInput" type="search" placeholder="Search a team, league, OVER or UNDER" autocomplete="off" />
+          <input id="searchInput" type="search" placeholder="Search a team, league, sportsbook, OVER or UNDER" autocomplete="off" />
           <button id="clearSearch" type="button" class="btn-clear" aria-label="Clear search">×</button>
         </div>
         <div class="results-count" aria-live="polite">
@@ -59,25 +59,42 @@
       <section class="best-bets" aria-labelledby="bestBetsHeading">
         <div class="section-heading">
           <div>
-            <span class="eyebrow">Largest model-vs-market edges</span>
+            <span class="eyebrow">Largest edges with line shopping</span>
             <h2 id="bestBetsHeading">🔥 BZ Bets — Best Plays Today</h2>
           </div>
-          <span class="section-note">Edge tier is not a win probability.</span>
+          <span class="section-note">Consensus sets the pick; Best Available shows the bettor-friendliest featured line currently returned.</span>
         </div>
 
         <div class="best-bet-grid">
           {% for g in best_bets %}
+            {% set best_line = g.get('best_line') %}
+            {% set best_price = g.get('best_price') %}
+            {% set display_line = best_line if best_line is not none else g.market_total %}
             <article class="best-bet-card">
               <div class="best-bet-top">
                 <span class="league-badge">{{ g.sport }}</span>
                 <span class="edge-tier">{{ g.edge_tier }}</span>
               </div>
               <div class="best-bet-matchup">{{ g.team1 }} @ {{ g.team2 }}</div>
-              <div class="best-bet-pick {{ g.pick|lower }}">{{ g.pick }} {{ "%.1f"|format(g.market_total) }}</div>
+              <div class="best-bet-pick {{ g.pick|lower }}">
+                {{ g.pick }} {{ "%.1f"|format(display_line) }}
+                {% if best_price is not none %}<span class="odds-price">{{ "%+d"|format(best_price) }}</span>{% endif %}
+              </div>
+              {% if g.get('best_book') %}
+                <div class="best-book-callout">
+                  <small>Best Available</small>
+                  <strong>{{ g.get('best_book') }}</strong>
+                  {% if g.get('line_improvement') and g.get('line_improvement') > 0 %}
+                    <span>+{{ "%.1f"|format(g.get('line_improvement')) }} pts vs consensus</span>
+                  {% else %}
+                    <span>Best price/line found</span>
+                  {% endif %}
+                </div>
+              {% endif %}
               <div class="best-bet-metrics">
-                <span><small>Market</small><strong>{{ "%.1f"|format(g.market_total) }}</strong></span>
+                <span><small>Consensus</small><strong>{{ "%.1f"|format(g.market_total) }}</strong></span>
                 <span><small>BZ</small><strong>{{ "%.1f"|format(g.predicted_total) }}</strong></span>
-                <span><small>Edge</small><strong>{{ "%+.1f"|format(g.edge) }}</strong></span>
+                <span><small>Best Edge</small><strong>{{ "%+.1f"|format(g.get('best_edge') if g.get('best_edge') is not none else g.edge) }}</strong></span>
               </div>
             </article>
           {% endfor %}
@@ -92,7 +109,7 @@
           <h2>All Games</h2>
         </div>
         {% if odds_enabled %}
-          <span class="section-note">Market = median total across available U.S. books.</span>
+          <span class="section-note">Consensus = median total across available U.S. books. Best Available favors the selected Over/Under direction, then the better American price.</span>
         {% endif %}
       </div>
 
@@ -103,7 +120,8 @@
               <th class="th-sport">League</th>
               <th class="th-time">Time</th>
               <th class="th-matchup">Matchup</th>
-              <th class="th-market">Market O/U</th>
+              <th class="th-market">Consensus O/U</th>
+              <th class="th-best-book">Best Available</th>
               <th class="th-total">BZ Total</th>
               <th class="th-edge">Edge</th>
               <th class="th-pick">Pick</th>
@@ -120,12 +138,15 @@
               {% set market = g.get('market_total') %}
               {% set edge = g.get('edge') %}
               {% set pick = g.get('pick') or 'NO LINE' %}
+              {% set best_line = g.get('best_line') %}
+              {% set best_price = g.get('best_price') %}
+              {% set best_book = g.get('best_book') or '' %}
 
               <tr class="game-row"
                   data-league="{{ league }}"
                   data-pick="{{ pick }}"
                   data-tier="{{ g.get('edge_tier') or '' }}"
-                  data-search="{{ (home ~ ' ' ~ away ~ ' ' ~ league ~ ' ' ~ pick ~ ' ' ~ (g.get('edge_tier') or ''))|lower }}">
+                  data-search="{{ (home ~ ' ' ~ away ~ ' ' ~ league ~ ' ' ~ pick ~ ' ' ~ best_book ~ ' ' ~ (g.get('edge_tier') or ''))|lower }}">
                 <td class="cell sport" data-label="League">{{ league }}</td>
                 <td class="cell time" data-label="Time">{{ g.get('display_time') or '' }}</td>
 
@@ -139,10 +160,26 @@
                   </div>
                 </td>
 
-                <td class="cell market" data-label="Market">
+                <td class="cell market" data-label="Consensus">
                   {% if market is not none %}
                     <strong>{{ "%.1f"|format(market) }}</strong>
                     <small>{{ g.get('bookmaker_count', 0) }} book{% if g.get('bookmaker_count', 0) != 1 %}s{% endif %}</small>
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
+
+                <td class="cell best-book" data-label="Best Available">
+                  {% if best_line is not none and pick in ['OVER', 'UNDER'] %}
+                    <strong>{{ pick }} {{ "%.1f"|format(best_line) }}</strong>
+                    <small>
+                      {{ best_book }}{% if best_price is not none %} · <span class="book-price">{{ "%+d"|format(best_price) }}</span>{% endif %}
+                    </small>
+                    {% if g.get('line_improvement') and g.get('line_improvement') > 0 %}
+                      <em>{{ "+%.1f"|format(g.get('line_improvement')) }} line value</em>
+                    {% endif %}
+                  {% elif market is not none and pick == 'PASS' %}
+                    <span class="muted">No play</span>
                   {% else %}
                     <span class="muted">—</span>
                   {% endif %}
@@ -167,7 +204,9 @@
 
                 <td class="cell pick" data-label="Pick">
                   <span class="pick-badge pick-{{ pick|lower|replace(' ', '-') }}">
-                    {% if pick in ['OVER', 'UNDER'] and market is not none %}
+                    {% if pick in ['OVER', 'UNDER'] and best_line is not none %}
+                      {{ pick }} {{ "%.1f"|format(best_line) }}
+                    {% elif pick in ['OVER', 'UNDER'] and market is not none %}
                       {{ pick }} {{ "%.1f"|format(market) }}
                     {% else %}
                       {{ pick }}
@@ -186,7 +225,7 @@
     </main>
 
     <footer class="site-footer">
-      <small>BZ projections are model estimates, not guarantees. <a href="{{ url_for('performance') }}">View tracked performance</a>. Times shown in {{ tz_name or "CST" }}.</small>
+      <small>BZ projections are model estimates, not guarantees. Shop availability and prices can change quickly. <a href="{{ url_for('performance') }}">View tracked performance</a>. Times shown in {{ tz_name or "CST" }}.</small>
     </footer>
   </div>
 

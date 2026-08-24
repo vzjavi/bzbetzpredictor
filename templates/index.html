@@ -76,6 +76,9 @@
                 <span class="edge-tier">{{ g.edge_tier }}</span>
               </div>
               <div class="best-bet-matchup">{{ g.team1 }} @ {{ g.team2 }}</div>
+              {% if g.get('model_version') == 'mlb_form_pitching_v2' %}
+                <div class="model-chip">MLB v2 · Form + Starters</div>
+              {% endif %}
               <div class="best-bet-pick {{ g.pick|lower }}">
                 {{ g.pick }} {{ "%.1f"|format(display_line) }}
                 {% if best_price is not none %}<span class="odds-price">{{ "%+d"|format(best_price) }}</span>{% endif %}
@@ -146,7 +149,7 @@
                   data-league="{{ league }}"
                   data-pick="{{ pick }}"
                   data-tier="{{ g.get('edge_tier') or '' }}"
-                  data-search="{{ (home ~ ' ' ~ away ~ ' ' ~ league ~ ' ' ~ pick ~ ' ' ~ best_book ~ ' ' ~ (g.get('edge_tier') or ''))|lower }}">
+                  data-search="{{ (home ~ ' ' ~ away ~ ' ' ~ league ~ ' ' ~ pick ~ ' ' ~ best_book ~ ' ' ~ (g.get('model_version') or '') ~ ' ' ~ (g.get('edge_tier') or ''))|lower }}">
                 <td class="cell sport" data-label="League">{{ league }}</td>
                 <td class="cell time" data-label="Time">{{ g.get('display_time') or '' }}</td>
 
@@ -158,6 +161,31 @@
                     <span class="team home">{{ home }}</span>
                     {% if hlogo %}<img class="logo" alt="{{ home }} logo" src="{{ hlogo }}">{% endif %}
                   </div>
+
+                  {% if g.get('model_version') == 'mlb_form_pitching_v2' %}
+                    <details class="model-breakdown">
+                      <summary><span class="model-chip">MLB v2</span> Why {{ "%.1f"|format(total) }}?</summary>
+                      <div class="model-breakdown-grid">
+                        <span><small>Season baseline</small><strong>{{ "%.1f"|format(g.get('baseline_total')) }}</strong></span>
+                        <span><small>Last-10 projection</small><strong>{% if g.get('recent_total') is not none %}{{ "%.1f"|format(g.get('recent_total')) }}{% else %}—{% endif %}</strong></span>
+                        <span><small>Starter adjustment</small><strong>{{ "%+.2f"|format(g.get('starter_adjustment') or 0) }}</strong></span>
+                      </div>
+                      <div class="starter-row">
+                        {% set away_sp = g.get('away_starter') %}
+                        {% set home_sp = g.get('home_starter') %}
+                        <span>
+                          <small>{{ away }} starter</small>
+                          <strong>{% if away_sp %}{{ away_sp.get('name') or 'TBD' }}{% else %}TBD{% endif %}</strong>
+                          {% if away_sp and away_sp.get('era') is not none %}<em>{{ "%.2f"|format(away_sp.get('era')) }} ERA{% if away_sp.get('whip') is not none %} · {{ "%.2f"|format(away_sp.get('whip')) }} WHIP{% endif %}</em>{% endif %}
+                        </span>
+                        <span>
+                          <small>{{ home }} starter</small>
+                          <strong>{% if home_sp %}{{ home_sp.get('name') or 'TBD' }}{% else %}TBD{% endif %}</strong>
+                          {% if home_sp and home_sp.get('era') is not none %}<em>{{ "%.2f"|format(home_sp.get('era')) }} ERA{% if home_sp.get('whip') is not none %} · {{ "%.2f"|format(home_sp.get('whip')) }} WHIP{% endif %}</em>{% endif %}
+                        </span>
+                      </div>
+                    </details>
+                  {% endif %}
                 </td>
 
                 <td class="cell market" data-label="Consensus">
@@ -225,7 +253,7 @@
     </main>
 
     <footer class="site-footer">
-      <small>BZ projections are model estimates, not guarantees. Shop availability and prices can change quickly. <a href="{{ url_for('performance') }}">View tracked performance</a>. Times shown in {{ tz_name or "CST" }}.</small>
+      <small>BZ projections are model estimates, not guarantees. MLB v2 currently blends season PF/PA, recent form, and probable-starter ERA. Shop availability and prices can change quickly. <a href="{{ url_for('performance') }}">View tracked performance</a>. Times shown in {{ tz_name or "CST" }}.</small>
     </footer>
   </div>
 

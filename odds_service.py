@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import requests
 
+from mlb_model_service import enrich_mlb_predictions
+
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
 SPORT_KEYS = {
@@ -323,6 +325,18 @@ def enrich_predictions_with_odds(
 ) -> List[Dict[str, Any]]:
     if not predictions:
         return predictions
+
+    for prediction in predictions:
+        prediction.setdefault("model_version", "baseline_pfpa_v1")
+        prediction.setdefault("baseline_total", prediction.get("predicted_total"))
+
+    if league == "MLB":
+        try:
+            predictions = enrich_mlb_predictions(predictions)
+        except Exception as exc:
+            # MLB v2 is deliberately fail-open: a StatsAPI outage should leave the
+            # existing baseline predictions usable rather than take the site down.
+            logging.exception("MLB v2 enrichment failed; using PF/PA baseline: %s", exc)
 
     markets = fetch_totals_market(league)
 

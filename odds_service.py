@@ -38,7 +38,7 @@ TEAM_NAME_ALIASES = {
 }
 
 _cache: Dict[str, Any] = {}
-_CACHE_TTL = timedelta(minutes=2)
+_CACHE_TTL = timedelta(minutes=5)
 
 
 def odds_api_enabled() -> bool:
@@ -235,6 +235,9 @@ def enrich_predictions_with_odds(
     predictions: List[Dict[str, Any]],
     league: str,
 ) -> List[Dict[str, Any]]:
+    if not predictions:
+        return predictions
+
     markets = fetch_totals_market(league)
 
     for prediction in predictions:

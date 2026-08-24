@@ -17,7 +17,7 @@ SPORT_KEYS = {
 }
 
 # These are intentionally called edge tiers, not confidence levels.
-# They only describe how far BZ's projection is from the market line.
+# They only describe how far BZ's projection is from the consensus market line.
 EDGE_THRESHOLDS = {
     "MLB": {"lean": 0.5, "good": 0.75, "strong": 1.0},
     "NBA": {"lean": 1.5, "good": 2.5, "strong": 4.0},
@@ -25,7 +25,6 @@ EDGE_THRESHOLDS = {
     "NCAAF": {"lean": 1.5, "good": 2.5, "strong": 4.0},
 }
 
-# Small set of naming differences that commonly show up across providers.
 TEAM_NAME_ALIASES = {
     "oakland athletics": "athletics",
     "southern california": "usc",
@@ -65,10 +64,6 @@ def _teams_match(a: Optional[str], b: Optional[str]) -> bool:
         return False
     if na == nb:
         return True
-
-    # Some providers include a city/school prefix while another source stores
-    # a short alias. This suffix comparison is conservative enough for pro
-    # teams and helps with common college-provider differences.
     if len(na) >= 5 and len(nb) >= 5:
         return na.endswith(nb) or nb.endswith(na)
     return False
@@ -84,44 +79,133 @@ def _parse_commence_time(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_price(value: Any) -> Optional[int]:
+    try:
+        if value in (None, ""):
+            return None
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_consensus_total(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Parse featured totals, preserving individual Over/Under offers and prices."""
     lines: List[float] = []
-    book_lines: List[Dict[str, Any]] = []
+    bookmaker_lines: List[Dict[str, Any]] = []
+    offers: List[Dict[str, Any]] = []
 
     for bookmaker in event.get("bookmakers") or []:
         book_name = bookmaker.get("title") or bookmaker.get("key") or "Sportsbook"
+        book_key = bookmaker.get("key") or book_name
+
         for market in bookmaker.get("markets") or []:
             if market.get("key") != "totals":
                 continue
 
-            points = []
+            market_points: List[float] = []
+            over_offer = None
+            under_offer = None
+
             for outcome in market.get("outcomes") or []:
-                point = outcome.get("point")
+                direction = str(outcome.get("name") or "").strip().upper()
+                if direction not in {"OVER", "UNDER"}:
+                    continue
+
+                point = _to_float(outcome.get("point"))
                 if point is None:
                     continue
-                try:
-                    points.append(float(point))
-                except (TypeError, ValueError):
-                    continue
+                price = _to_price(outcome.get("price"))
 
-            if not points:
+                offer = {
+                    "bookmaker": book_name,
+                    "bookmaker_key": book_key,
+                    "direction": direction,
+                    "total": point,
+                    "price": price,
+                    "last_update": market.get("last_update") or bookmaker.get("last_update"),
+                }
+                offers.append(offer)
+                market_points.append(point)
+                if direction == "OVER":
+                    over_offer = offer
+                else:
+                    under_offer = offer
+
+            if not market_points:
                 continue
 
-            # Over and Under normally carry the same point; median also handles
-            # malformed feeds gracefully if they do not.
-            point = float(median(points))
-            lines.append(point)
-            book_lines.append({"bookmaker": book_name, "total": point})
+            # Featured Over and Under normally share the same point. Taking the
+            # median remains robust if a provider briefly returns mismatched points.
+            book_total = float(median(market_points))
+            lines.append(book_total)
+            bookmaker_lines.append(
+                {
+                    "bookmaker": book_name,
+                    "bookmaker_key": book_key,
+                    "total": book_total,
+                    "over_price": over_offer.get("price") if over_offer else None,
+                    "under_price": under_offer.get("price") if under_offer else None,
+                    "over_total": over_offer.get("total") if over_offer else None,
+                    "under_total": under_offer.get("total") if under_offer else None,
+                }
+            )
 
     if not lines:
         return None
 
-    consensus = round(float(median(lines)), 1)
     return {
-        "market_total": consensus,
-        "bookmaker_count": len(book_lines),
-        "bookmaker_lines": book_lines,
+        "market_total": round(float(median(lines)), 1),
+        "bookmaker_count": len(bookmaker_lines),
+        "bookmaker_lines": bookmaker_lines,
+        "offers": offers,
     }
+
+
+def _select_best_offer(offers: Iterable[Dict[str, Any]], pick: str) -> Optional[Dict[str, Any]]:
+    """Return the bettor-friendliest featured total for the requested direction.
+
+    OVER prefers the lowest total; UNDER prefers the highest total. If multiple
+    books offer the same point, the higher American price is better for the bettor
+    (for example -105 is better than -110, and +100 is better than -105).
+    """
+    pick = (pick or "").upper()
+    if pick not in {"OVER", "UNDER"}:
+        return None
+
+    candidates = []
+    for offer in offers or []:
+        if (offer.get("direction") or "").upper() != pick:
+            continue
+        total = _to_float(offer.get("total"))
+        if total is None:
+            continue
+        price = _to_price(offer.get("price"))
+        normalized = dict(offer)
+        normalized["total"] = total
+        normalized["price"] = price
+        candidates.append(normalized)
+
+    if not candidates:
+        return None
+
+    # Missing prices lose a same-line tiebreak but do not disqualify a better point.
+    def price_rank(offer: Dict[str, Any]) -> int:
+        return offer.get("price") if offer.get("price") is not None else -100000
+
+    if pick == "OVER":
+        candidates.sort(key=lambda offer: (offer["total"], -price_rank(offer)))
+    else:
+        candidates.sort(key=lambda offer: (-offer["total"], -price_rank(offer)))
+    return candidates[0]
 
 
 def fetch_totals_market(league: str) -> List[Dict[str, Any]]:
@@ -152,6 +236,9 @@ def fetch_totals_market(league: str) -> List[Dict[str, Any]]:
         response = requests.get(url, params=params, timeout=timeout)
         response.raise_for_status()
         raw_events = response.json() or []
+        remaining = response.headers.get("x-requests-remaining")
+        if remaining is not None:
+            logging.info("Odds API credits remaining after %s fetch: %s", league, remaining)
     except Exception as exc:
         logging.warning("Odds API fetch failed for %s: %s", league, exc)
         return []
@@ -205,7 +292,6 @@ def _find_market_for_prediction(
     if not candidates:
         return None
 
-    # If time is available, prefer the closest kickoff/first-pitch match.
     candidates.sort(key=lambda item: item[0] if item[0] is not None else float("inf"))
     return candidates[0][1]
 
@@ -241,12 +327,23 @@ def enrich_predictions_with_odds(
     markets = fetch_totals_market(league)
 
     for prediction in predictions:
-        prediction["market_total"] = None
-        prediction["edge"] = None
-        prediction["abs_edge"] = None
-        prediction["pick"] = "NO LINE"
-        prediction["edge_tier"] = "No market line"
-        prediction["bookmaker_count"] = 0
+        prediction.update(
+            {
+                "market_total": None,
+                "edge": None,
+                "abs_edge": None,
+                "pick": "NO LINE",
+                "edge_tier": "No market line",
+                "bookmaker_count": 0,
+                "best_book": None,
+                "best_book_key": None,
+                "best_line": None,
+                "best_price": None,
+                "best_edge": None,
+                "best_abs_edge": None,
+                "line_improvement": None,
+            }
+        )
 
         market = _find_market_for_prediction(prediction, markets)
         if not market:
@@ -257,17 +354,39 @@ def enrich_predictions_with_odds(
         edge = round(predicted_total - market_total, 1)
         meta = _edge_metadata(league, edge)
 
-        prediction.update(
-            {
-                "market_total": market_total,
-                "edge": edge,
-                "abs_edge": abs(edge),
-                "pick": meta["pick"],
-                "edge_tier": meta["edge_tier"],
-                "bookmaker_count": market.get("bookmaker_count", 0),
-                "odds_event_id": market.get("event_id"),
-            }
-        )
+        update = {
+            "market_total": market_total,
+            "edge": edge,
+            "abs_edge": abs(edge),
+            "pick": meta["pick"],
+            "edge_tier": meta["edge_tier"],
+            "bookmaker_count": market.get("bookmaker_count", 0),
+            "odds_event_id": market.get("event_id"),
+            "bookmaker_lines": market.get("bookmaker_lines") or [],
+        }
+
+        best_offer = _select_best_offer(market.get("offers") or [], meta["pick"])
+        if best_offer:
+            best_line = float(best_offer["total"])
+            best_edge = round(predicted_total - best_line, 1)
+            if meta["pick"] == "OVER":
+                line_improvement = round(market_total - best_line, 1)
+            else:
+                line_improvement = round(best_line - market_total, 1)
+
+            update.update(
+                {
+                    "best_book": best_offer.get("bookmaker"),
+                    "best_book_key": best_offer.get("bookmaker_key"),
+                    "best_line": best_line,
+                    "best_price": best_offer.get("price"),
+                    "best_edge": best_edge,
+                    "best_abs_edge": abs(best_edge),
+                    "line_improvement": line_improvement,
+                }
+            )
+
+        prediction.update(update)
 
     return predictions
 
@@ -281,4 +400,8 @@ def select_best_bets(
         for p in predictions
         if p.get("pick") in {"OVER", "UNDER"} and p.get("abs_edge") is not None
     ]
-    return sorted(playable, key=lambda p: p.get("abs_edge", 0), reverse=True)[:limit]
+    return sorted(
+        playable,
+        key=lambda p: p.get("best_abs_edge") if p.get("best_abs_edge") is not None else p.get("abs_edge", 0),
+        reverse=True,
+    )[:limit]

@@ -12,11 +12,7 @@
   <div class="page-wrap performance-page">
     <header class="site-header performance-header">
       <div class="brand">
-        {% if logo_url %}
-          <img src="{{ logo_url }}" alt="BZ Bets" class="brand-img">
-        {% else %}
-          <div class="brand-fallback">BZ BETS</div>
-        {% endif %}
+        {% if logo_url %}<img src="{{ logo_url }}" alt="BZ Bets" class="brand-img">{% else %}<div class="brand-fallback">BZ BETS</div>{% endif %}
         <div class="brand-sub">Model Performance</div>
       </div>
       <nav class="site-nav" aria-label="BZ Bets navigation">
@@ -28,19 +24,50 @@
     {% if dashboard.error %}
       <div class="status-banner">Performance data could not be loaded yet. Today's picks are still available.</div>
     {% endif %}
+    {% if dashboard.duplicates_ignored %}
+      <div class="integrity-banner">Data integrity check: {{ dashboard.duplicates_ignored }} duplicate raw row{% if dashboard.duplicates_ignored != 1 %}s{% endif %} ignored. Canonical matchup history is used for all records.</div>
+    {% endif %}
 
     <section class="performance-hero">
       <div>
-        <span class="eyebrow">Tracked automatically from first observed market line</span>
+        <span class="eyebrow">First observed line + last observed pregame line</span>
         <h1>BZ Bets Results</h1>
-        <p>Completed OVER/UNDER picks are graded from final scores. PASS games are tracked but excluded from the betting record.</p>
+        <p>OVER/UNDER picks are graded from final scores. Line value is positive when the market moves in the direction of the original BZ pick.</p>
       </div>
       <div class="tracking-meta">
         <strong>{{ dashboard.tracked_games }}</strong>
-        <span>games tracked</span>
-        <small>{{ dashboard.pending_bets }} active/pending bets</small>
+        <span>games in view</span>
+        <small>{{ dashboard.total_tracked_games }} canonical games total</small>
       </div>
     </section>
+
+    <form class="performance-filters" method="get" action="{{ url_for('performance') }}">
+      <label>Window
+        <select name="window">
+          <option value="all" {% if dashboard.filters.window == 'all' %}selected{% endif %}>All time</option>
+          <option value="7" {% if dashboard.filters.window == '7' %}selected{% endif %}>Last 7 days</option>
+          <option value="30" {% if dashboard.filters.window == '30' %}selected{% endif %}>Last 30 days</option>
+          <option value="season" {% if dashboard.filters.window == 'season' %}selected{% endif %}>Current season/year</option>
+        </select>
+      </label>
+      <label>League
+        <select name="league">
+          {% for value in ['ALL','MLB','NFL','NCAAF','NBA'] %}<option value="{{ value }}" {% if dashboard.filters.league == value %}selected{% endif %}>{{ value|title if value == 'ALL' else value }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Pick
+        <select name="pick">
+          {% for value in ['ALL','OVER','UNDER'] %}<option value="{{ value }}" {% if dashboard.filters.pick == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Edge tier
+        <select name="tier">
+          {% for value in ['ALL','Strong Edge','Good Edge','Lean'] %}<option value="{{ value }}" {% if dashboard.filters.tier == value %}selected{% endif %}>{{ value|title if value == 'ALL' else value }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Apply Filters</button>
+      <a href="{{ url_for('performance') }}">Reset</a>
+    </form>
 
     <section class="metric-grid" aria-label="Overall model performance">
       <article class="metric-card primary-metric">
@@ -59,114 +86,66 @@
         <small>1u risk per bet, -110 assumption</small>
       </article>
       <article class="metric-card">
+        <span class="metric-label">Avg Line Value</span>
+        <strong class="{% if dashboard.clv.average > 0 %}positive{% elif dashboard.clv.average < 0 %}negative{% endif %}">{{ "%+.2f"|format(dashboard.clv.average) }}</strong>
+        <small>{{ dashboard.clv.positive_rate }}% positive · {{ dashboard.clv.count }} samples</small>
+      </article>
+      <article class="metric-card">
         <span class="metric-label">Graded Bets</span>
         <strong>{{ dashboard.graded_bets }}</strong>
-        <small>{{ dashboard.pass_games }} pass games tracked</small>
+        <small>{{ dashboard.pending_bets }} pending · {{ dashboard.pass_games }} passes</small>
       </article>
     </section>
 
     {% if dashboard.graded_bets == 0 %}
       <section class="empty-performance">
-        <h2>Tracking has started.</h2>
-        <p>The dashboard will populate after the first tracked games finish. BZ Bets will preserve the first market line it saw for each game and grade the result automatically.</p>
+        <h2>Tracking is active.</h2>
+        <p>The record will populate as tracked games finish. Pregame line movement can begin accumulating before the first results are graded.</p>
       </section>
     {% else %}
       <section class="breakdown-grid">
         <article class="breakdown-card">
-          <div class="section-heading compact-heading">
-            <div>
-              <span class="eyebrow">Where the model performs</span>
-              <h2>By League</h2>
-            </div>
-          </div>
-          <div class="breakdown-list">
-            {% for item in dashboard.by_league %}
-              <div class="breakdown-row">
-                <strong>{{ item.label }}</strong>
-                <span>{{ item.record }}</span>
-                <span>{{ "%.1f"|format(item.hit_rate) }}%</span>
-                <span class="{% if item.flat_units > 0 %}positive{% elif item.flat_units < 0 %}negative{% endif %}">{{ "%+.2f"|format(item.flat_units) }}u</span>
-              </div>
-            {% endfor %}
-          </div>
+          <div class="section-heading compact-heading"><div><span class="eyebrow">Where the model performs</span><h2>By League</h2></div></div>
+          <div class="breakdown-list">{% for item in dashboard.by_league %}<div class="breakdown-row"><strong>{{ item.label }}</strong><span>{{ item.record }}</span><span>{{ "%.1f"|format(item.hit_rate) }}%</span><span class="{% if item.flat_units > 0 %}positive{% elif item.flat_units < 0 %}negative{% endif %}">{{ "%+.2f"|format(item.flat_units) }}u</span></div>{% endfor %}</div>
         </article>
-
         <article class="breakdown-card">
-          <div class="section-heading compact-heading">
-            <div>
-              <span class="eyebrow">Test the edge labels</span>
-              <h2>By Edge Tier</h2>
-            </div>
-          </div>
-          <div class="breakdown-list">
-            {% for item in dashboard.by_tier %}
-              <div class="breakdown-row">
-                <strong>{{ item.label }}</strong>
-                <span>{{ item.record }}</span>
-                <span>{{ "%.1f"|format(item.hit_rate) }}%</span>
-                <span class="{% if item.flat_units > 0 %}positive{% elif item.flat_units < 0 %}negative{% endif %}">{{ "%+.2f"|format(item.flat_units) }}u</span>
-              </div>
-            {% endfor %}
-          </div>
+          <div class="section-heading compact-heading"><div><span class="eyebrow">Test the edge labels</span><h2>By Edge Tier</h2></div></div>
+          <div class="breakdown-list">{% for item in dashboard.by_tier %}<div class="breakdown-row"><strong>{{ item.label }}</strong><span>{{ item.record }}</span><span>{{ "%.1f"|format(item.hit_rate) }}%</span><span class="{% if item.flat_units > 0 %}positive{% elif item.flat_units < 0 %}negative{% endif %}">{{ "%+.2f"|format(item.flat_units) }}u</span></div>{% endfor %}</div>
         </article>
-
         <article class="breakdown-card">
-          <div class="section-heading compact-heading">
-            <div>
-              <span class="eyebrow">Direction check</span>
-              <h2>Overs vs. Unders</h2>
-            </div>
-          </div>
-          <div class="breakdown-list">
-            {% for item in dashboard.by_pick %}
-              <div class="breakdown-row">
-                <strong>{{ item.label }}</strong>
-                <span>{{ item.record }}</span>
-                <span>{{ "%.1f"|format(item.hit_rate) }}%</span>
-                <span class="{% if item.flat_units > 0 %}positive{% elif item.flat_units < 0 %}negative{% endif %}">{{ "%+.2f"|format(item.flat_units) }}u</span>
-              </div>
-            {% endfor %}
-          </div>
+          <div class="section-heading compact-heading"><div><span class="eyebrow">Direction check</span><h2>Overs vs. Unders</h2></div></div>
+          <div class="breakdown-list">{% for item in dashboard.by_pick %}<div class="breakdown-row"><strong>{{ item.label }}</strong><span>{{ item.record }}</span><span>{{ "%.1f"|format(item.hit_rate) }}%</span><span class="{% if item.flat_units > 0 %}positive{% elif item.flat_units < 0 %}negative{% endif %}">{{ "%+.2f"|format(item.flat_units) }}u</span></div>{% endfor %}</div>
         </article>
+        {% if dashboard.by_model_version %}
+        <article class="breakdown-card">
+          <div class="section-heading compact-heading"><div><span class="eyebrow">Formula comparison</span><h2>By Model Version</h2></div></div>
+          <div class="breakdown-list">{% for item in dashboard.by_model_version %}<div class="breakdown-row"><strong>{{ item.label }}</strong><span>{{ item.record }}</span><span>{{ "%.1f"|format(item.hit_rate) }}%</span><span class="{% if item.flat_units > 0 %}positive{% elif item.flat_units < 0 %}negative{% endif %}">{{ "%+.2f"|format(item.flat_units) }}u</span></div>{% endfor %}</div>
+        </article>
+        {% endif %}
       </section>
 
       <section class="card results-card">
         <div class="table-title-row">
-          <div>
-            <span class="eyebrow">Most recently graded</span>
-            <h2>Results</h2>
-          </div>
-          <span class="section-note">First observed line is preserved for every matchup.</span>
+          <div><span class="eyebrow">Most recently graded</span><h2>Results</h2></div>
+          <span class="section-note">Open = first observed line. Last = last line BZ captured before start.</span>
         </div>
         <div class="table-wrap">
           <table class="performance-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>League</th>
-                <th>Matchup</th>
-                <th>Pick</th>
-                <th>BZ</th>
-                <th>Final</th>
-                <th>Result</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Date</th><th>League</th><th>Matchup</th><th>Pick</th><th>BZ</th><th>Open</th><th>Last</th><th>Line Value</th><th>Final</th><th>Result</th><th>Model</th></tr></thead>
             <tbody>
               {% for row in dashboard.recent %}
                 <tr>
                   <td>{{ row.game_date }}</td>
                   <td><span class="league-badge">{{ row.league }}</span></td>
                   <td><strong>{{ row.away_team }} @ {{ row.home_team }}</strong></td>
-                  <td>
-                    {% if row.pick in ['OVER', 'UNDER'] %}
-                      <span class="pick-badge pick-{{ row.pick|lower }}">{{ row.pick }} {{ "%.1f"|format(row.market_total) }}</span>
-                    {% else %}
-                      <span class="pick-badge pick-pass">PASS</span>
-                    {% endif %}
-                  </td>
+                  <td>{% if row.pick in ['OVER','UNDER'] %}<span class="pick-badge pick-{{ row.pick|lower }}">{{ row.pick }} {{ "%.1f"|format(row.market_total) }}</span>{% else %}<span class="pick-badge pick-pass">PASS</span>{% endif %}</td>
                   <td>{{ "%.1f"|format(row.bz_total) if row.bz_total is not none else '—' }}</td>
+                  <td>{{ "%.1f"|format(row.market_total) if row.market_total is not none else '—' }}</td>
+                  <td>{{ "%.1f"|format(row.last_market_total) if row.last_market_total is not none else '—' }}</td>
+                  <td class="{% if row.clv is not none and row.clv > 0 %}positive{% elif row.clv is not none and row.clv < 0 %}negative{% endif %}">{{ "%+.1f"|format(row.clv) if row.clv is not none else '—' }}</td>
                   <td>{{ "%.1f"|format(row.actual_total) if row.actual_total is not none else '—' }}</td>
                   <td><span class="result-badge result-{{ row.result|lower }}">{{ row.result }}</span></td>
+                  <td><small class="model-tag">{{ row.model_version }}</small></td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -176,7 +155,7 @@
     {% endif %}
 
     <footer class="site-footer">
-      <small>Flat-bet units are a comparison metric using a standard -110 price, not actual sportsbook P&amp;L. Tracking begins when this feature is deployed.</small>
+      <small>Line value uses the last pregame total BZ Bets observed, so it approximates closing-line movement rather than claiming an official sportsbook closing line.</small>
     </footer>
   </div>
 </body>

@@ -1,0 +1,30 @@
+name: BZ Bets Tracking Cron
+
+on:
+  schedule:
+    # Four daily checkpoints (UTC) to conserve Odds API credits while still
+    # sampling typical U.S. pregame windows. Adjust if your API plan changes.
+    - cron: "0 16,20,0,3 * * *"
+  workflow_dispatch:
+
+jobs:
+  snapshot-and-grade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run BZ Bets tracking endpoint
+        env:
+          BZ_BETS_URL: ${{ secrets.BZ_BETS_URL }}
+          BZ_BETS_ADMIN_TOKEN: ${{ secrets.BZ_BETS_ADMIN_TOKEN }}
+        run: |
+          if [ -z "$BZ_BETS_URL" ] || [ -z "$BZ_BETS_ADMIN_TOKEN" ]; then
+            echo "Tracking cron is installed but not activated. Add BZ_BETS_URL and BZ_BETS_ADMIN_TOKEN repository secrets."
+            exit 0
+          fi
+
+          BASE_URL="${BZ_BETS_URL%/}"
+          curl --fail --silent --show-error \
+            --retry 2 \
+            --max-time 120 \
+            -X POST "$BASE_URL/admin/tracking" \
+            -H "X-Admin-Token: $BZ_BETS_ADMIN_TOKEN" \
+            -H "Accept: application/json"

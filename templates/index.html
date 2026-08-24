@@ -19,6 +19,11 @@
         <div class="brand-sub">Market Edge Predictions for {{ date_str }}</div>
       </div>
 
+      <nav class="site-nav" aria-label="BZ Bets navigation">
+        <a href="{{ url_for('index') }}" class="active">Today's Picks</a>
+        <a href="{{ url_for('performance') }}">Performance</a>
+      </nav>
+
       {% if not odds_enabled %}
         <div class="status-banner">
           Sportsbook lines are ready but not connected yet. Add <code>THE_ODDS_API_KEY</code> to enable market edges and picks.
@@ -181,7 +186,7 @@
     </main>
 
     <footer class="site-footer">
-      <small>BZ projections are model estimates, not guarantees. Times shown in {{ tz_name or "CST" }}.</small>
+      <small>BZ projections are model estimates, not guarantees. <a href="{{ url_for('performance') }}">View tracked performance</a>. Times shown in {{ tz_name or "CST" }}.</small>
     </footer>
   </div>
 

@@ -1,6 +1,6 @@
 # BZ Bets Sports Predictor
 
-BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. The model builds a projected game total from team scoring/defensive data and can compare that projection with live sportsbook totals to identify model-vs-market edges.
+BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. The model builds a projected game total from team scoring/defensive data, compares that projection with live sportsbook totals, and now tracks how those picks perform after games finish.
 
 ## BZ Bets v2 market-edge features
 
@@ -15,20 +15,50 @@ BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. Th
 
 Edge tiers describe only the size of the model-vs-market difference. They are not win probabilities or historical confidence scores.
 
+## Automatic performance tracking
+
+BZ Bets creates a `Predictions` worksheet inside the same Google spreadsheet used for team data. No additional database is required for this phase.
+
+For every game with a market total, the app stores the first prediction snapshot it sees:
+
+- game date and league
+- away/home teams
+- first observed market total
+- BZ projected total
+- model edge and edge tier
+- OVER / UNDER / PASS decision
+- sportsbook count
+- Odds API event id
+
+Existing snapshots are never overwritten when the sportsbook line moves later. This preserves a real historical record instead of grading against a future line.
+
+Completed games are checked against ESPN scoreboard data and automatically receive:
+
+- away and home final scores
+- actual game total
+- WIN / LOSS / PUSH / PASS result
+- grading timestamp
+
+The `/performance` page reports overall record, hit rate, flat-bet units, league splits, edge-tier splits, Overs vs. Unders, and recent graded games.
+
+Flat-bet units are a comparison metric only and assume risking 1 unit at standard -110 pricing for every tracked OVER/UNDER. They are not actual sportsbook P&L because the current consensus market line does not represent a single book's price.
+
+Tracking begins when this version is deployed; it does not retroactively invent predictions for games that were never captured.
+
 ## Current baseline model
 
 The current prediction model uses each team's season points/runs scored per game and points/runs allowed per game:
 
 `Predicted Total = (Home PF/G + Home PA/G + Away PF/G + Away PA/G) / 2`
 
-This is the baseline that future BZ Bets versions can improve with recent form, starting pitchers, bullpen data, injuries, pace, weather, and backtesting.
+This remains the baseline that future BZ Bets versions can improve with recent form, starting pitchers, bullpen data, injuries, pace, weather, and backtesting.
 
 ## Stack
 
 - Python / Flask
 - Pandas
 - Google Sheets API
-- TheSportsDB / ESPN schedule data
+- TheSportsDB / ESPN schedule and final-score data
 - The Odds API totals markets
 - HTML / CSS / JavaScript
 
@@ -46,17 +76,22 @@ Optional settings:
 
 `ODDS_API_TIMEOUT=12`
 
+`PREDICTIONS_SHEET_NAME=Predictions`
+
 The app only requests the `totals` market, which keeps odds API usage lower than requesting moneylines, spreads, and totals together.
 
 ## Existing data configuration
 
-The app still reads Team, G, PF, and PA data from the configured Google Sheet. Existing Google service-account configuration remains required for that data source.
+The app reads Team, G, PF, and PA data from the configured Google Sheet. The Google service account must have edit access because performance tracking creates and updates the `Predictions` worksheet.
+
+## Admin tracking endpoint
+
+`POST /admin/tracking` with the existing `X-Admin-Token` header forces a current prediction snapshot and a grading pass. Normal site traffic also records snapshots and checks grading automatically, so this endpoint is mainly useful for a future scheduled job.
 
 ## Next development phases
 
-1. Save every prediction and sportsbook line before game time.
-2. Automatically grade final results and build record/ROI dashboards.
-3. Track closing-line value.
-4. Upgrade MLB with probable pitchers, recent form, bullpen strength, park factors, and weather.
-5. Add football-specific efficiency, pace, injury, rest, and weather features.
-6. Backtest feature weights and later compare machine-learning models against the baseline model.
+1. Track closing-line value and book-specific prices.
+2. Upgrade MLB with probable pitchers, recent form, bullpen strength, park factors, and weather.
+3. Use the accumulated results to recalibrate edge thresholds.
+4. Add football-specific efficiency, pace, injury, rest, and weather features.
+5. Backtest feature weights and compare machine-learning models against the baseline model.

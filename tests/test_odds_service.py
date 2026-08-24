@@ -92,8 +92,9 @@ class OddsServiceTests(unittest.TestCase):
         self.assertEqual(best["bookmaker"], "Book C")
         self.assertEqual(best["price"], 100)
 
+    @patch("odds_service.enrich_mlb_predictions", side_effect=lambda predictions: predictions)
     @patch("odds_service.fetch_totals_market")
-    def test_enrichment_exposes_best_book_and_best_edge(self, mock_fetch):
+    def test_enrichment_exposes_best_book_and_best_edge(self, mock_fetch, _mock_mlb):
         parsed = _extract_consensus_total(self.event)
         mock_fetch.return_value = [
             {

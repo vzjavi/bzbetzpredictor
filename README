@@ -1,6 +1,6 @@
 # BZ Bets Sports Predictor
 
-BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. It builds a projected game total from team scoring/defensive data, compares that projection with live sportsbook totals, and tracks how the picks and market movement perform over time.
+BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. It builds projected game totals, compares them with live sportsbook totals, shops available lines, and tracks model performance and market movement over time.
 
 ## Market-edge features
 
@@ -33,6 +33,70 @@ Example:
 
 This separation prevents historical performance from being silently rewritten while still showing the bettor a better current number when one exists.
 
+## MLB Model v2 — recent form + probable starters
+
+MLB no longer relies only on the season PF/PA baseline. New MLB predictions use model version:
+
+`mlb_form_pitching_v2`
+
+The model starts with the original season projection:
+
+`Season Baseline = (Home RF/G + Home RA/G + Away RF/G + Away RA/G) / 2`
+
+It then adds two transparent MLB-specific signals from MLB StatsAPI.
+
+### Recent form
+
+BZ Bets looks at each club's last 10 completed regular-season games and computes recent runs scored and allowed per game. When both teams have at least five games available, it builds a recent matchup projection and blends it with the season baseline:
+
+`Blended Total = 70% Season Baseline + 30% Last-10 Projection`
+
+The recent weight is deliberately conservative so a short hot/cold streak does not completely replace a full-season sample.
+
+### Probable starting pitchers
+
+For today's games, BZ Bets requests the probable starters and their current season pitching statistics. The first version uses starter ERA as a conservative run adjustment around a league-style baseline of 4.20 ERA:
+
+`Starter Adjustment = sum(Starter ERA - 4.20) × 0.24`
+
+The adjustment is capped at `+/-1.25` runs so pitching data cannot overwhelm the rest of the model. Starter WHIP is displayed for context but is not independently weighted yet.
+
+The final MLB v2 total is:
+
+`MLB v2 Total = Blended Total + Starter Adjustment`
+
+If recent-form data, a probable starter, or MLB StatsAPI is unavailable, the missing component simply falls back toward the season baseline. The site stays usable instead of fabricating data or dropping the game.
+
+### Explainable predictions
+
+Every MLB matchup includes an expandable `Why this total?` section showing:
+
+- season baseline
+- last-10 matchup projection
+- starter adjustment
+- away probable starter and ERA/WHIP when available
+- home probable starter and ERA/WHIP when available
+
+This makes model changes visible instead of presenting an unexplained number.
+
+### MLB v2 tuning variables
+
+Optional deployment variables:
+
+`MLB_RECENT_GAMES=10`
+
+`MLB_RECENT_WEIGHT=0.30`
+
+`MLB_STARTER_ERA_BASELINE=4.20`
+
+`MLB_STARTER_ERA_COEFFICIENT=0.24`
+
+`MLB_STARTER_ADJUSTMENT_CAP=1.25`
+
+`MLB_STATS_API_TIMEOUT=12`
+
+The defaults are intentionally conservative. They should be changed only after enough tracked/backtested games exist to compare alternatives.
+
 ## Automatic performance tracking
 
 BZ Bets creates a `Predictions` worksheet inside the existing Google spreadsheet. No additional database is required for this phase.
@@ -48,6 +112,8 @@ For every game with a market total the app stores the first observed prediction 
 - last observed pregame consensus total
 - line value relative to the original pick
 - canonical matchup key and capture source
+
+Existing captured predictions are never converted retroactively to a newer model. A game first captured by `baseline_pfpa_v1` remains a v1 result; future games first captured with MLB v2 are stored as `mlb_form_pitching_v2`. This keeps model comparisons honest.
 
 ### Duplicate protection
 
@@ -77,19 +143,13 @@ This approximates closing-line movement. It is intentionally labeled from the la
 
 PASS games remain stored for analysis but are excluded from the betting record.
 
-## Model version tracking
+## Baseline model for non-MLB leagues
 
-Set:
-
-`BZ_MODEL_VERSION=baseline_pfpa_v1`
-
-Every new tracked matchup stores the model version that produced its original projection. When the formula is upgraded later, change this value (for example `mlb_pitching_v2`) so historical performance can be compared without mixing model generations.
-
-## Current baseline model
+NBA, NFL and NCAAF currently continue to use:
 
 `Predicted Total = (Home PF/G + Home PA/G + Away PF/G + Away PA/G) / 2`
 
-This remains the baseline before adding recent form, starting pitchers, bullpen data, park factors, weather, football efficiency and other sport-specific features.
+Their tracked model version remains `baseline_pfpa_v1` until sport-specific upgrades are introduced.
 
 ## Scheduled tracking
 
@@ -105,10 +165,11 @@ Once those secrets exist, the workflow calls `POST /admin/tracking`, which captu
 - Python / Flask
 - Pandas
 - Google Sheets API
+- MLB StatsAPI for MLB recent form and probable pitchers
 - TheSportsDB / ESPN schedule and final-score data
 - The Odds API totals markets
 - HTML / CSS / JavaScript
-- GitHub Actions for tests and optional scheduled tracking
+- GitHub Actions for tests and scheduled tracking
 
 ## Environment variables
 
@@ -142,8 +203,9 @@ The Google service account needs edit access to the spreadsheet because BZ Bets 
 
 ## Next development phases
 
-1. Upgrade the MLB model with probable pitchers, recent form, bullpen strength, park factors and weather.
-2. Add a dedicated historical snapshot for best-book prices so performance can calculate price-aware theoretical ROI in addition to the stable consensus benchmark.
-3. Use accumulated results to recalibrate edge tiers into evidence-based confidence ranges.
-4. Add football-specific efficiency, pace, injury, rest and weather features.
-5. Build historical backtesting and compare future machine-learning models against the baseline.
+1. Add MLB bullpen strength/workload and home/road splits.
+2. Add MLB park factors and game-time weather/wind.
+3. Add a dedicated historical snapshot for best-book prices so performance can calculate price-aware theoretical ROI in addition to the stable consensus benchmark.
+4. Use accumulated results and backtesting to optimize MLB v2 weights and recalibrate edge tiers into evidence-based confidence ranges.
+5. Add football-specific efficiency, pace, injury, rest and weather features.
+6. Build historical backtesting and compare future machine-learning models against the transparent baseline/v2 models.

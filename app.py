@@ -23,6 +23,11 @@ from googleapiclient.discovery import build
 from espn_scraper import run_scraper
 from ncaaf_team_matching_helper import extend_mapping_with_schedule, resolve_team, save_mapping
 from odds_service import enrich_predictions_with_odds, odds_api_enabled, select_best_bets
+from tracking_service import (
+    get_performance_dashboard,
+    grade_ungraded_predictions,
+    record_prediction_snapshots,
+)
 
 # ----------------------------------------------------------------------------- #
 # Logging
@@ -609,10 +614,12 @@ def _check_admin_token():
 def admin_daily():
     _check_admin_token()
     summary = run_scraper()
+    grading = grade_ungraded_predictions(force=True)
     return jsonify(
         {
             "ok": True,
             "summary": summary,
+            "grading": grading,
             "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat(),
         }
     )
@@ -622,10 +629,30 @@ def admin_daily():
 def admin_daily_get():
     _check_admin_token()
     summary = run_scraper()
+    grading = grade_ungraded_predictions(force=True)
     return jsonify(
         {
             "ok": True,
             "summary": summary,
+            "grading": grading,
+            "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat(),
+        }
+    )
+
+
+@app.post("/admin/tracking")
+def admin_tracking():
+    _check_admin_token()
+    all_predictions = []
+    for sport in ["NBA", "MLB", "NFL", "NCAAF"]:
+        all_predictions.extend(predict_game_totals(sport))
+    tracking = record_prediction_snapshots(all_predictions)
+    grading = grade_ungraded_predictions(force=True)
+    return jsonify(
+        {
+            "ok": True,
+            "tracking": tracking,
+            "grading": grading,
             "ran_at": datetime.now(LOCAL_TIMEZONE).isoformat(),
         }
     )
@@ -656,6 +683,10 @@ def index():
     all_predictions = sorted(
         all_predictions, key=lambda x: x.get("game_time") or datetime.max
     )
+    tracking_summary = record_prediction_snapshots(all_predictions)
+    grading_summary = grade_ungraded_predictions()
+    logging.info("Tracking summary: %s; grading summary: %s", tracking_summary, grading_summary)
+
     best_bets = select_best_bets(all_predictions, limit=5)
 
     local_now = datetime.now(LOCAL_TIMEZONE)
@@ -670,6 +701,18 @@ def index():
         odds_enabled=odds_api_enabled(),
         date_str=date_str,
         tz_name=tz_name,
+        logo_url=logo_url,
+    )
+
+
+@app.route("/performance")
+def performance():
+    grade_ungraded_predictions()
+    dashboard = get_performance_dashboard()
+    logo_url = url_for("static", filename="XHE1qwUp_400x400.jpg")
+    return render_template(
+        "performance.html",
+        dashboard=dashboard,
         logo_url=logo_url,
     )
 

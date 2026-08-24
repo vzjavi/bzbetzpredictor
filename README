@@ -1,57 +1,85 @@
 # BZ Bets Sports Predictor
 
-BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. The model builds a projected game total from team scoring/defensive data, compares that projection with live sportsbook totals, and now tracks how those picks perform after games finish.
+BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. It builds a projected game total from team scoring/defensive data, compares that projection with live sportsbook totals, and tracks how the picks and market movement perform over time.
 
-## BZ Bets v2 market-edge features
+## Market-edge features
 
 - Pulls totals markets from The Odds API for MLB, NBA, NFL, and NCAAF.
-- Uses the median total across available U.S. sportsbooks as the market consensus line.
+- Uses the median total across available U.S. sportsbooks as the consensus market line.
 - Calculates `BZ Edge = BZ Predicted Total - Market Total`.
-- Labels games as OVER, UNDER, or PASS using sport-specific edge thresholds.
+- Labels games OVER, UNDER, or PASS using sport-specific edge thresholds.
 - Ranks the largest playable edges in a Best Plays section.
-- Shows Market O/U, BZ Total, Edge, Pick, and number of books contributing to the consensus.
-- Includes league, Overs, Unders, and Best Plays filters.
-- Keeps the original prediction-only behavior when no odds API key is configured.
+- Shows Market O/U, BZ Total, Edge, Pick, and number of contributing sportsbooks.
+- Avoids odds API requests when a league has no games and caches market data to conserve API credits.
 
-Edge tiers describe only the size of the model-vs-market difference. They are not win probabilities or historical confidence scores.
+Edge tiers describe model-vs-market distance only. They are not win probabilities.
 
 ## Automatic performance tracking
 
-BZ Bets creates a `Predictions` worksheet inside the same Google spreadsheet used for team data. No additional database is required for this phase.
+BZ Bets creates a `Predictions` worksheet inside the existing Google spreadsheet. No additional database is required for this phase.
 
-For every game with a market total, the app stores the first prediction snapshot it sees:
+For every game with a market total the app stores the first observed prediction and line, then later grades the final score from ESPN. The sheet tracks:
 
-- game date and league
-- away/home teams
-- first observed market total
-- BZ projected total
-- model edge and edge tier
-- OVER / UNDER / PASS decision
-- sportsbook count
-- Odds API event id
+- game date, league, teams and game time
+- first observed consensus market total
+- BZ projected total, edge, edge tier and pick
+- sportsbook count and provider event id
+- final score, actual total and WIN / LOSS / PUSH result
+- model version
+- last observed pregame total
+- line value relative to the original pick
+- canonical matchup key and capture source
 
-Existing snapshots are never overwritten when the sportsbook line moves later. This preserves a real historical record instead of grading against a future line.
+### Duplicate protection
 
-Completed games are checked against ESPN scoreboard data and automatically receive:
+Historical/provider event IDs are not trusted as the unique game identifier anymore. BZ Bets builds a canonical key from league + date + away team + home team. The earliest capture for that matchup is the official tracked row; duplicate raw rows are ignored in grading and performance calculations without deleting the underlying sheet data.
 
-- away and home final scores
-- actual game total
-- WIN / LOSS / PUSH / PASS result
-- grading timestamp
+### Last observed pregame line / line value
 
-The `/performance` page reports overall record, hit rate, flat-bet units, league splits, edge-tier splits, Overs vs. Unders, and recent graded games.
+The first market line is never replaced. Later tracking runs update a separate `last_market_total` only while the game is still pregame.
 
-Flat-bet units are a comparison metric only and assume risking 1 unit at standard -110 pricing for every tracked OVER/UNDER. They are not actual sportsbook P&L because the current consensus market line does not represent a single book's price.
+Line value is positive when the market moves in BZ Bets' original pick direction:
 
-Tracking begins when this version is deployed; it does not retroactively invent predictions for games that were never captured.
+- `OVER 8.0` and last observed pregame line `9.0` = `+1.0`
+- `UNDER 9.0` and last observed pregame line `8.0` = `+1.0`
+
+This approximates closing-line movement. It is intentionally labeled from the last line BZ Bets observed before the start rather than claiming an official sportsbook closing line.
+
+## Performance dashboard
+
+`/performance` includes:
+
+- overall record and hit rate
+- flat-bet units using a standard -110 comparison assumption
+- average line value and positive-line-value rate
+- league, edge-tier, Overs/Unders and model-version breakdowns
+- filters for last 7 days, last 30 days, current season/year, league, pick direction and edge tier
+- recent result rows with first line, last observed pregame line, line value and model version
+
+PASS games remain stored for analysis but are excluded from the betting record.
+
+## Model version tracking
+
+Set:
+
+`BZ_MODEL_VERSION=baseline_pfpa_v1`
+
+Every new tracked matchup stores the model version that produced its original projection. When the formula is upgraded later, change this value (for example `mlb_pitching_v2`) so historical performance can be compared without mixing model generations.
 
 ## Current baseline model
 
-The current prediction model uses each team's season points/runs scored per game and points/runs allowed per game:
-
 `Predicted Total = (Home PF/G + Home PA/G + Away PF/G + Away PA/G) / 2`
 
-This remains the baseline that future BZ Bets versions can improve with recent form, starting pitchers, bullpen data, injuries, pace, weather, and backtesting.
+This remains the baseline before adding recent form, starting pitchers, bullpen data, park factors, weather, football efficiency and other sport-specific features.
+
+## Scheduled tracking
+
+The repository includes `.github/workflows/tracking-cron.yml`. It runs every 30 minutes but safely exits without doing anything until two GitHub Actions repository secrets are configured:
+
+- `BZ_BETS_URL` — the deployed BZ Bets base URL, for example `https://your-service.onrender.com`
+- `BZ_BETS_ADMIN_TOKEN` — the same value used for the Render `ADMIN_TOKEN` environment variable
+
+Once those secrets exist, the workflow calls `POST /admin/tracking`, which captures current pregame lines and grades completed games. This keeps history and last-observed line values updating even when nobody opens the website.
 
 ## Stack
 
@@ -61,16 +89,15 @@ This remains the baseline that future BZ Bets versions can improve with recent f
 - TheSportsDB / ESPN schedule and final-score data
 - The Odds API totals markets
 - HTML / CSS / JavaScript
+- GitHub Actions for tests and optional scheduled tracking
 
-## Market data setup
+## Environment variables
 
-1. Create an API key at The Odds API.
-2. Copy `.env.example` to `.env` for local development, or add the variable in your deployment environment.
-3. Set:
+Required for live market data:
 
 `THE_ODDS_API_KEY=your_api_key_here`
 
-Optional settings:
+Common optional/configuration values:
 
 `ODDS_API_REGIONS=us`
 
@@ -78,20 +105,26 @@ Optional settings:
 
 `PREDICTIONS_SHEET_NAME=Predictions`
 
-The app only requests the `totals` market, which keeps odds API usage lower than requesting moneylines, spreads, and totals together.
+`BZ_MODEL_VERSION=baseline_pfpa_v1`
 
-## Existing data configuration
+`GOOGLE_SHEETS_ID=your_google_sheet_id`
 
-The app reads Team, G, PF, and PA data from the configured Google Sheet. The Google service account must have edit access because performance tracking creates and updates the `Predictions` worksheet.
+`GOOGLE_APPLICATION_CREDENTIALS=service_account.json`
+
+`ADMIN_TOKEN=change_me`
+
+`FLASK_SECRET_KEY=change_me`
+
+The Google service account needs edit access to the spreadsheet because BZ Bets creates and updates the `Predictions` worksheet.
 
 ## Admin tracking endpoint
 
-`POST /admin/tracking` with the existing `X-Admin-Token` header forces a current prediction snapshot and a grading pass. Normal site traffic also records snapshots and checks grading automatically, so this endpoint is mainly useful for a future scheduled job.
+`POST /admin/tracking` with the `X-Admin-Token` header forces a current prediction snapshot/line update and grading pass.
 
 ## Next development phases
 
-1. Track closing-line value and book-specific prices.
-2. Upgrade MLB with probable pitchers, recent form, bullpen strength, park factors, and weather.
-3. Use the accumulated results to recalibrate edge thresholds.
-4. Add football-specific efficiency, pace, injury, rest, and weather features.
-5. Backtest feature weights and compare machine-learning models against the baseline model.
+1. Capture book-specific Over/Under prices and identify the best available line.
+2. Upgrade the MLB model with probable pitchers, recent form, bullpen strength, park factors and weather.
+3. Use accumulated results to recalibrate edge tiers into evidence-based confidence ranges.
+4. Add football-specific efficiency, pace, injury, rest and weather features.
+5. Build historical backtesting and compare future machine-learning models against the baseline.

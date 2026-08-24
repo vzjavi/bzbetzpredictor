@@ -3,8 +3,11 @@ from unittest.mock import Mock, patch
 
 from tracking_service import (
     _aggregate,
+    _canonical_game_key,
+    _clv_value,
     _fetch_completed_games,
     _grade_pick,
+    _snapshot_id,
     _teams_match,
 )
 
@@ -22,6 +25,29 @@ class TrackingServiceTests(unittest.TestCase):
         self.assertTrue(_teams_match("Oakland Athletics", "Athletics"))
         self.assertTrue(_teams_match("Texas Rangers", "Texas Rangers"))
         self.assertFalse(_teams_match("Texas Rangers", "Houston Astros"))
+
+    def test_canonical_key_does_not_depend_on_provider_event_id(self):
+        prediction_a = {
+            "sport": "MLB",
+            "team1": "Astros",
+            "team2": "Rangers",
+            "away_team_raw": "Houston Astros",
+            "home_team_raw": "Texas Rangers",
+            "odds_event_id": "provider-id-1",
+        }
+        prediction_b = {**prediction_a, "odds_event_id": "provider-id-2"}
+        self.assertEqual(_snapshot_id(prediction_a), _snapshot_id(prediction_b))
+        self.assertEqual(
+            _canonical_game_key("MLB", "2026-08-24", "Houston Astros", "Texas Rangers"),
+            "MLB:2026-08-24:houston astros:texas rangers",
+        )
+
+    def test_line_value_is_positive_when_market_moves_with_pick(self):
+        self.assertEqual(_clv_value("OVER", 8.0, 9.0), 1.0)
+        self.assertEqual(_clv_value("UNDER", 9.0, 8.0), 1.0)
+        self.assertEqual(_clv_value("OVER", 9.0, 8.5), -0.5)
+        self.assertEqual(_clv_value("UNDER", 8.0, 8.5), -0.5)
+        self.assertIsNone(_clv_value("PASS", 8.0, 9.0))
 
     @patch("tracking_service.requests.get")
     def test_completed_scoreboard_parsing(self, mock_get):

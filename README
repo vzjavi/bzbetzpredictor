@@ -6,19 +6,38 @@ BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. It
 
 - Pulls totals markets from The Odds API for MLB, NBA, NFL, and NCAAF.
 - Uses the median total across available U.S. sportsbooks as the consensus market line.
-- Calculates `BZ Edge = BZ Predicted Total - Market Total`.
+- Preserves each bookmaker's featured Over/Under line and American price.
+- Calculates `BZ Edge = BZ Predicted Total - Consensus Market Total`.
 - Labels games OVER, UNDER, or PASS using sport-specific edge thresholds.
-- Ranks the largest playable edges in a Best Plays section.
-- Shows Market O/U, BZ Total, Edge, Pick, and number of contributing sportsbooks.
+- Shops the available sportsbooks for the bettor-friendliest line in the selected direction.
+- For OVER picks, the lowest available total is preferred; for UNDER picks, the highest available total is preferred.
+- When multiple books offer the same point, the better American price wins the tiebreak.
+- Shows the consensus total, best available sportsbook/line/price, BZ total, edge and pick.
+- Ranks Best Plays using the actionable edge against the best available line while keeping the official model decision tied to the consensus line.
 - Avoids odds API requests when a league has no games and caches market data to conserve API credits.
 
-Edge tiers describe model-vs-market distance only. They are not win probabilities.
+Edge tiers describe model-vs-consensus-market distance only. They are not win probabilities.
+
+### Consensus vs. Best Available
+
+The consensus line remains BZ Bets' stable model-comparison benchmark and is what the existing performance tracker grades. The Best Available line is a live line-shopping aid and can change as sportsbooks move.
+
+Example:
+
+- Consensus total: `8.5`
+- BZ projection: `10.0`
+- Official BZ pick: `OVER 8.5`
+- Best available: `FanDuel OVER 8.0 -105`
+- Consensus edge: `+1.5`
+- Actionable best-line edge: `+2.0`
+
+This separation prevents historical performance from being silently rewritten while still showing the bettor a better current number when one exists.
 
 ## Automatic performance tracking
 
 BZ Bets creates a `Predictions` worksheet inside the existing Google spreadsheet. No additional database is required for this phase.
 
-For every game with a market total the app stores the first observed prediction and line, then later grades the final score from ESPN. The sheet tracks:
+For every game with a market total the app stores the first observed prediction and consensus line, then later grades the final score from ESPN. The sheet tracks:
 
 - game date, league, teams and game time
 - first observed consensus market total
@@ -26,7 +45,7 @@ For every game with a market total the app stores the first observed prediction 
 - sportsbook count and provider event id
 - final score, actual total and WIN / LOSS / PUSH result
 - model version
-- last observed pregame total
+- last observed pregame consensus total
 - line value relative to the original pick
 - canonical matchup key and capture source
 
@@ -36,7 +55,7 @@ Historical/provider event IDs are not trusted as the unique game identifier anym
 
 ### Last observed pregame line / line value
 
-The first market line is never replaced. Later tracking runs update a separate `last_market_total` only while the game is still pregame.
+The first consensus market line is never replaced. Later tracking runs update a separate `last_market_total` only while the game is still pregame.
 
 Line value is positive when the market moves in BZ Bets' original pick direction:
 
@@ -123,8 +142,8 @@ The Google service account needs edit access to the spreadsheet because BZ Bets 
 
 ## Next development phases
 
-1. Capture book-specific Over/Under prices and identify the best available line.
-2. Upgrade the MLB model with probable pitchers, recent form, bullpen strength, park factors and weather.
+1. Upgrade the MLB model with probable pitchers, recent form, bullpen strength, park factors and weather.
+2. Add a dedicated historical snapshot for best-book prices so performance can calculate price-aware theoretical ROI in addition to the stable consensus benchmark.
 3. Use accumulated results to recalibrate edge tiers into evidence-based confidence ranges.
 4. Add football-specific efficiency, pace, injury, rest and weather features.
 5. Build historical backtesting and compare future machine-learning models against the baseline.

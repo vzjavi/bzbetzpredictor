@@ -3,42 +3,94 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>BZ Bets — Over/Under Predictions</title>
+  <title>BZ Bets — Market Edge Predictions</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
-  <style>
-    :root { --font-ui: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
-    body { font-family: var(--font-ui); }
-    .brand-img { height: 40px; display:block; }
-    .brand-fallback { font-weight: 900; font-size: 28px; letter-spacing: 1px; }
-  </style>
 </head>
 <body class="page">
   <div class="page-wrap">
     <header class="site-header">
-      <div class="brand" style="align-items:center;text-align:center;">
+      <div class="brand">
         {% if logo_url %}
           <img src="{{ logo_url }}" alt="BZ Bets" class="brand-img">
         {% else %}
           <div class="brand-fallback">BZ BETS</div>
         {% endif %}
-        <div class="brand-sub">Over/Under Predictions for {{ date_str }}</div>
+        <div class="brand-sub">Market Edge Predictions for {{ date_str }}</div>
       </div>
+
+      {% if not odds_enabled %}
+        <div class="status-banner">
+          Sportsbook lines are ready but not connected yet. Add <code>THE_ODDS_API_KEY</code> to enable market edges and picks.
+        </div>
+      {% endif %}
 
       <div class="controls">
         <label class="sr-only" for="searchInput">Search by team name</label>
-        <div class="search" style="max-width:1000px; width:100%;">
+        <div class="search">
           <svg aria-hidden="true" viewBox="0 0 24 24" class="search-icon"><path d="M21 21l-4.3-4.3m2.1-5.4a7.5 7.5 0 11-15 0 7.5 7.5 0 0115 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <input id="searchInput" type="search" placeholder="Search a team (e.g., Celtics, Dolphins, Longhorns)" autocomplete="off" />
+          <input id="searchInput" type="search" placeholder="Search a team, league, OVER or UNDER" autocomplete="off" />
           <button id="clearSearch" type="button" class="btn-clear" aria-label="Clear search">×</button>
         </div>
         <div class="results-count" aria-live="polite">
           <span id="visibleCount">0</span> of <span id="totalCount">0</span> games
         </div>
       </div>
+
+      <div class="filter-bar" aria-label="Prediction filters">
+        <button class="filter-chip active" data-filter-type="league" data-filter-value="all">All</button>
+        <button class="filter-chip" data-filter-type="league" data-filter-value="MLB">MLB</button>
+        <button class="filter-chip" data-filter-type="league" data-filter-value="NFL">NFL</button>
+        <button class="filter-chip" data-filter-type="league" data-filter-value="NCAAF">NCAAF</button>
+        <button class="filter-chip" data-filter-type="league" data-filter-value="NBA">NBA</button>
+        <span class="filter-divider" aria-hidden="true"></span>
+        <button class="filter-chip" data-filter-type="pick" data-filter-value="play">Best Plays</button>
+        <button class="filter-chip" data-filter-type="pick" data-filter-value="OVER">Overs</button>
+        <button class="filter-chip" data-filter-type="pick" data-filter-value="UNDER">Unders</button>
+      </div>
     </header>
 
+    {% if best_bets %}
+      <section class="best-bets" aria-labelledby="bestBetsHeading">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Largest model-vs-market edges</span>
+            <h2 id="bestBetsHeading">🔥 BZ Bets — Best Plays Today</h2>
+          </div>
+          <span class="section-note">Edge tier is not a win probability.</span>
+        </div>
+
+        <div class="best-bet-grid">
+          {% for g in best_bets %}
+            <article class="best-bet-card">
+              <div class="best-bet-top">
+                <span class="league-badge">{{ g.sport }}</span>
+                <span class="edge-tier">{{ g.edge_tier }}</span>
+              </div>
+              <div class="best-bet-matchup">{{ g.team1 }} @ {{ g.team2 }}</div>
+              <div class="best-bet-pick {{ g.pick|lower }}">{{ g.pick }} {{ "%.1f"|format(g.market_total) }}</div>
+              <div class="best-bet-metrics">
+                <span><small>Market</small><strong>{{ "%.1f"|format(g.market_total) }}</strong></span>
+                <span><small>BZ</small><strong>{{ "%.1f"|format(g.predicted_total) }}</strong></span>
+                <span><small>Edge</small><strong>{{ "%+.1f"|format(g.edge) }}</strong></span>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
     <main class="card">
+      <div class="table-title-row">
+        <div>
+          <span class="eyebrow">Every matchup today</span>
+          <h2>All Games</h2>
+        </div>
+        {% if odds_enabled %}
+          <span class="section-note">Market = median total across available U.S. books.</span>
+        {% endif %}
+      </div>
+
       <div class="table-wrap">
         <table class="predictions" id="predictionsTable">
           <thead>
@@ -46,41 +98,75 @@
               <th class="th-sport">League</th>
               <th class="th-time">Time</th>
               <th class="th-matchup">Matchup</th>
-              <th class="th-total">Predicted Total</th>
+              <th class="th-market">Market O/U</th>
+              <th class="th-total">BZ Total</th>
+              <th class="th-edge">Edge</th>
+              <th class="th-pick">Pick</th>
             </tr>
           </thead>
           <tbody>
             {% for g in predictions %}
-              {# Robust fallbacks so names/logos render with zero backend changes #}
-              {% set home = g.get('home_team') or g.get('home') or g.get('home_name') or g.get('homeTeam') or g.get('team2') or '' %}
-              {% set away = g.get('away_team') or g.get('away') or g.get('away_name') or g.get('awayTeam') or g.get('team1') or '' %}
-              {% set hlogo = g.get('home_logo') or g.get('home_logo_url') or g.get('homeLogo') or g.get('team2_logo') or '' %}
-              {% set alogo = g.get('away_logo') or g.get('away_logo_url') or g.get('awayLogo') or g.get('team1_logo') or '' %}
-              {% set time_local = g.get('time_local') or g.get('time') or g.get('local_time') or g.get('game_time') or '' %}
-              {% set league = g.get('league') or g.get('sport') or '' %}
-              {% set total = g.get('predicted_total') or g.get('total') or g.get('pred_total') %}
+              {% set home = g.get('team2') or '' %}
+              {% set away = g.get('team1') or '' %}
+              {% set hlogo = g.get('team2_logo') or '' %}
+              {% set alogo = g.get('team1_logo') or '' %}
+              {% set league = g.get('sport') or '' %}
+              {% set total = g.get('predicted_total') %}
+              {% set market = g.get('market_total') %}
+              {% set edge = g.get('edge') %}
+              {% set pick = g.get('pick') or 'NO LINE' %}
 
               <tr class="game-row"
-                  data-search="{{ (home ~ ' ' ~ away ~ ' ' ~ league ~ ' ' ~ time_local)|lower }}">
-                <td class="cell sport">{{ league }}</td>
-                <td class="cell time">
-                    {% set t = g.get('display_time')
-                        or (g.get('game_time').strftime("%I:%M %p") if g.get('game_time') else time_local) %}
-                    {{ t }}
-                </td>
+                  data-league="{{ league }}"
+                  data-pick="{{ pick }}"
+                  data-tier="{{ g.get('edge_tier') or '' }}"
+                  data-search="{{ (home ~ ' ' ~ away ~ ' ' ~ league ~ ' ' ~ pick ~ ' ' ~ (g.get('edge_tier') or ''))|lower }}">
+                <td class="cell sport" data-label="League">{{ league }}</td>
+                <td class="cell time" data-label="Time">{{ g.get('display_time') or '' }}</td>
 
-                <td class="cell matchup">
+                <td class="cell matchup" data-label="Matchup">
                   <div class="matchup-flex">
                     {% if alogo %}<img class="logo" alt="{{ away }} logo" src="{{ alogo }}">{% endif %}
-                    <span class="team home">{{ away }}</span>
-                    <span class="vs">vs</span>
-                    <span class="team away">{{ home }}</span>
+                    <span class="team away">{{ away }}</span>
+                    <span class="at">@</span>
+                    <span class="team home">{{ home }}</span>
                     {% if hlogo %}<img class="logo" alt="{{ home }} logo" src="{{ hlogo }}">{% endif %}
                   </div>
                 </td>
-                <td class="cell total">
+
+                <td class="cell market" data-label="Market">
+                  {% if market is not none %}
+                    <strong>{{ "%.1f"|format(market) }}</strong>
+                    <small>{{ g.get('bookmaker_count', 0) }} book{% if g.get('bookmaker_count', 0) != 1 %}s{% endif %}</small>
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
+
+                <td class="cell total" data-label="BZ Total">
                   <span class="pill">
                     {% if total is not none %}{{ "%.1f"|format(total) }}{% else %}—{% endif %}
+                  </span>
+                </td>
+
+                <td class="cell edge" data-label="Edge">
+                  {% if edge is not none %}
+                    <strong class="{% if edge > 0 %}edge-over{% elif edge < 0 %}edge-under{% endif %}">
+                      {{ "%+.1f"|format(edge) }}
+                    </strong>
+                    <small>{{ g.get('edge_tier') }}</small>
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
+
+                <td class="cell pick" data-label="Pick">
+                  <span class="pick-badge pick-{{ pick|lower|replace(' ', '-') }}">
+                    {% if pick in ['OVER', 'UNDER'] and market is not none %}
+                      {{ pick }} {{ "%.1f"|format(market) }}
+                    {% else %}
+                      {{ pick }}
+                    {% endif %}
                   </span>
                 </td>
               </tr>
@@ -88,11 +174,14 @@
           </tbody>
         </table>
       </div>
-      <p class="muted tip">Tip: type a few letters—results filter instantly. Clear with the “×”.</p>
+
+      {% if not predictions %}
+        <div class="empty-state">No supported games found for today.</div>
+      {% endif %}
     </main>
 
     <footer class="site-footer">
-      <small>Model shows totals only; no market lines. Times shown in {{ tz_name or "CST" }}.</small>
+      <small>BZ projections are model estimates, not guarantees. Times shown in {{ tz_name or "CST" }}.</small>
     </footer>
   </div>
 

@@ -1,1 +1,62 @@
-Developed a full-stack sports prediction web application focused on over/under totals for NBA, MLB, NFL, and NCAAF games. Built the backend with Python and Flask to collect, process, and compare team statistics from external sports APIs and data sources. Implemented team-name normalization, schedule retrieval, matchup analysis, and automated prediction calculations, with Google Sheets integration for managing statistical data. Designed a responsive web interface using HTML, CSS, and JavaScript to display daily matchups and predicted totals in an easy-to-read format. Deployed the application online and used Git/GitHub for version control and ongoing development.
+# BZ Bets Sports Predictor
+
+BZ Bets is a Flask sports totals prediction app for MLB, NBA, NFL, and NCAAF. The model builds a projected game total from team scoring/defensive data and can compare that projection with live sportsbook totals to identify model-vs-market edges.
+
+## BZ Bets v2 market-edge features
+
+- Pulls totals markets from The Odds API for MLB, NBA, NFL, and NCAAF.
+- Uses the median total across available U.S. sportsbooks as the market consensus line.
+- Calculates `BZ Edge = BZ Predicted Total - Market Total`.
+- Labels games as OVER, UNDER, or PASS using sport-specific edge thresholds.
+- Ranks the largest playable edges in a Best Plays section.
+- Shows Market O/U, BZ Total, Edge, Pick, and number of books contributing to the consensus.
+- Includes league, Overs, Unders, and Best Plays filters.
+- Keeps the original prediction-only behavior when no odds API key is configured.
+
+Edge tiers describe only the size of the model-vs-market difference. They are not win probabilities or historical confidence scores.
+
+## Current baseline model
+
+The current prediction model uses each team's season points/runs scored per game and points/runs allowed per game:
+
+`Predicted Total = (Home PF/G + Home PA/G + Away PF/G + Away PA/G) / 2`
+
+This is the baseline that future BZ Bets versions can improve with recent form, starting pitchers, bullpen data, injuries, pace, weather, and backtesting.
+
+## Stack
+
+- Python / Flask
+- Pandas
+- Google Sheets API
+- TheSportsDB / ESPN schedule data
+- The Odds API totals markets
+- HTML / CSS / JavaScript
+
+## Market data setup
+
+1. Create an API key at The Odds API.
+2. Copy `.env.example` to `.env` for local development, or add the variable in your deployment environment.
+3. Set:
+
+`THE_ODDS_API_KEY=your_api_key_here`
+
+Optional settings:
+
+`ODDS_API_REGIONS=us`
+
+`ODDS_API_TIMEOUT=12`
+
+The app only requests the `totals` market, which keeps odds API usage lower than requesting moneylines, spreads, and totals together.
+
+## Existing data configuration
+
+The app still reads Team, G, PF, and PA data from the configured Google Sheet. Existing Google service-account configuration remains required for that data source.
+
+## Next development phases
+
+1. Save every prediction and sportsbook line before game time.
+2. Automatically grade final results and build record/ROI dashboards.
+3. Track closing-line value.
+4. Upgrade MLB with probable pitchers, recent form, bullpen strength, park factors, and weather.
+5. Add football-specific efficiency, pace, injury, rest, and weather features.
+6. Backtest feature weights and later compare machine-learning models against the baseline model.

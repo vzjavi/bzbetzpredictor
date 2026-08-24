@@ -1,52 +1,94 @@
-// Table filtering for BZ Bets (robust + accurate counter)
+// Search + league/pick filtering for BZ Bets
 (function () {
   const input = document.getElementById('searchInput');
   const clearBtn = document.getElementById('clearSearch');
   const table = document.getElementById('predictionsTable');
-  const rows = Array.from(table.querySelectorAll('tbody tr'));
+  if (!table) return;
+
+  const rows = Array.from(table.querySelectorAll('tbody tr.game-row'));
   const visibleCountEl = document.getElementById('visibleCount');
   const totalCountEl = document.getElementById('totalCount');
+  const chips = Array.from(document.querySelectorAll('.filter-chip'));
+
+  let leagueFilter = 'all';
+  let pickFilter = 'all';
 
   const normalize = (s) => (s || '').toLowerCase().normalize('NFKD');
 
-  const getRowText = (row) => {
-    const ds = row.getAttribute('data-search');
-    if (ds) return normalize(ds);
-    const matchup = row.querySelector('.cell.matchup')?.textContent || '';
-    const sport = row.querySelector('.cell.sport')?.textContent || '';
-    const time  = row.querySelector('.cell.time')?.textContent || '';
-    return normalize([matchup, sport, time].join(' '));
-  };
+  const index = rows.map((row) => ({
+    row,
+    text: normalize(row.getAttribute('data-search') || row.textContent),
+    league: row.getAttribute('data-league') || '',
+    pick: row.getAttribute('data-pick') || '',
+  }));
 
-  const index = rows.map((r) => ({ row: r, text: getRowText(r) }));
-  totalCountEl.textContent = rows.length;
+  if (totalCountEl) totalCountEl.textContent = rows.length;
 
-  const updateVisibleCount = () => {
-    const count = rows.reduce((n, r) => n + (r.style.display !== 'none' ? 1 : 0), 0);
-    visibleCountEl.textContent = count;
-  };
+  function applyFilters() {
+    const q = normalize(input?.value?.trim() || '');
 
-  const applyFilter = (term) => {
-    const q = normalize(term.trim());
-    index.forEach(({ row, text }) => {
-      const hit = !q || text.includes(q);
-      row.style.display = hit ? '' : 'none';
+    index.forEach(({ row, text, league, pick }) => {
+      const searchHit = !q || text.includes(q);
+      const leagueHit = leagueFilter === 'all' || league === leagueFilter;
+      const pickHit =
+        pickFilter === 'all' ||
+        pick === pickFilter ||
+        (pickFilter === 'play' && (pick === 'OVER' || pick === 'UNDER'));
+
+      row.style.display = searchHit && leagueHit && pickHit ? '' : 'none';
     });
-    updateVisibleCount();
-  };
 
-  let t;
+    if (visibleCountEl) {
+      visibleCountEl.textContent = rows.reduce(
+        (count, row) => count + (row.style.display !== 'none' ? 1 : 0),
+        0
+      );
+    }
+  }
+
+  function setChipState(type, value) {
+    chips
+      .filter((chip) => chip.dataset.filterType === type)
+      .forEach((chip) => {
+        const isActive =
+          (type === 'league' && chip.dataset.filterValue === value) ||
+          (type === 'pick' && chip.dataset.filterValue === value);
+        chip.classList.toggle('active', isActive);
+      });
+  }
+
+  let debounce;
   input?.addEventListener('input', () => {
-    clearTimeout(t);
-    t = setTimeout(() => applyFilter(input.value), 80);
+    clearTimeout(debounce);
+    debounce = setTimeout(applyFilters, 80);
   });
 
   clearBtn?.addEventListener('click', () => {
     input.value = '';
     input.focus();
-    applyFilter('');
+    applyFilters();
   });
 
-  // initial render
-  applyFilter(input?.value || '');
+  chips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const type = chip.dataset.filterType;
+      const value = chip.dataset.filterValue;
+
+      if (type === 'league') {
+        leagueFilter = value;
+        setChipState('league', value);
+      } else if (type === 'pick') {
+        pickFilter = pickFilter === value ? 'all' : value;
+        chips
+          .filter((item) => item.dataset.filterType === 'pick')
+          .forEach((item) =>
+            item.classList.toggle('active', item.dataset.filterValue === pickFilter)
+          );
+      }
+
+      applyFilters();
+    });
+  });
+
+  applyFilters();
 })();

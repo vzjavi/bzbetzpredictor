@@ -289,6 +289,20 @@ tbody tr:hover{background:#f1f5f9}
 .cell.best-book em{display:block;margin-top:3px;color:var(--green);font-size:10px;font-style:normal;font-weight:900}
 .book-price{font-variant-numeric:tabular-nums;color:var(--text);font-weight:950}
 
+/* MLB model v2 explainability */
+.model-chip{display:inline-flex;align-items:center;width:max-content;margin-top:7px;padding:4px 7px;border-radius:999px;background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;font-size:9px;font-weight:950;letter-spacing:.03em;text-transform:uppercase}
+.model-breakdown{margin:9px auto 0;max-width:430px;text-align:left;border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden}
+.model-breakdown summary{cursor:pointer;list-style:none;padding:7px 9px;color:var(--text-dim);font-size:10px;font-weight:900;text-align:center}
+.model-breakdown summary::-webkit-details-marker{display:none}
+.model-breakdown[open] summary{border-bottom:1px solid var(--border);background:#f8fafc}
+.model-breakdown summary .model-chip{margin:0 5px 0 0;vertical-align:middle}
+.model-breakdown-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:9px}
+.model-breakdown-grid span,.starter-row span{padding:7px;border:1px solid var(--border);border-radius:8px;background:#f8fafc}
+.model-breakdown-grid small,.starter-row small{display:block;color:var(--muted);font-size:8px;text-transform:uppercase;font-weight:900;letter-spacing:.05em}
+.model-breakdown-grid strong,.starter-row strong{display:block;margin-top:2px;font-size:11px}
+.starter-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:0 9px 9px}
+.starter-row em{display:block;margin-top:2px;color:var(--text-dim);font-size:9px;font-style:normal;font-weight:750}
+
 .sr-only{
   position:absolute;
   width:1px;
@@ -357,6 +371,7 @@ tbody tr:hover{background:#f1f5f9}
   .cell.best-book{grid-column:1/-1;padding:9px 10px!important;background:#f8fafc;border:1px solid var(--border)!important;border-radius:10px}
   .cell.best-book small{display:inline;margin-left:5px}
   .cell.best-book em{display:inline;margin-left:6px}
+  .model-breakdown{margin-left:0;margin-right:0;max-width:none}
 }
 
 @media (max-width:500px){
@@ -365,6 +380,7 @@ tbody tr:hover{background:#f1f5f9}
   .filter-chip{flex:0 0 auto}
   .brand-img{height:78px}
   .brand-sub{font-size:15px}
+  .model-breakdown-grid,.starter-row{grid-template-columns:1fr}
 }
 
 @media (max-width:390px){

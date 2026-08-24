@@ -256,6 +256,7 @@ def record_prediction_snapshots(predictions: Iterable[Dict[str, Any]]) -> Dict[s
             if current is None:
                 pick = prediction.get("pick") or ""
                 clv = _clv_value(pick, current_market, current_market)
+                model_version = prediction.get("model_version") or MODEL_VERSION
                 row = [
                     key, game_date, prediction.get("sport") or "", game_time_ct,
                     prediction.get("team1") or "", prediction.get("team2") or "",
@@ -264,7 +265,7 @@ def record_prediction_snapshots(predictions: Iterable[Dict[str, Any]]) -> Dict[s
                     current_market, prediction.get("predicted_total"), prediction.get("edge"),
                     prediction.get("edge_tier") or "", pick,
                     prediction.get("bookmaker_count") or 0, prediction.get("odds_event_id") or "",
-                    now_local.isoformat(), "", "", "", "", "", "PENDING", MODEL_VERSION,
+                    now_local.isoformat(), "", "", "", "", "", "PENDING", model_version,
                     current_market, now_local.isoformat(), clv if clv is not None else "",
                     "FIRST_OBSERVED", key, source,
                 ]

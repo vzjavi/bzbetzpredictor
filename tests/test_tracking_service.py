@@ -6,7 +6,9 @@ from tracking_service import (
     _canonical_game_key,
     _clv_value,
     _fetch_completed_games,
+    _freeze_prediction_from_row,
     _grade_pick,
+    _mark_missed_pregame,
     _snapshot_id,
     _teams_match,
 )
@@ -50,29 +52,31 @@ class TrackingServiceTests(unittest.TestCase):
         self.assertIsNone(_clv_value("PASS", 8.0, 9.0))
 
     @patch("tracking_service.requests.get")
-    def test_completed_scoreboard_parsing(self, mock_get):
+    def test_completed_mlb_statsapi_parsing(self, mock_get):
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = {
-            "events": [
+            "dates": [
                 {
-                    "status": {"type": {"completed": True, "state": "post"}},
-                    "competitions": [
+                    "games": [
                         {
-                            "competitors": [
-                                {
-                                    "homeAway": "away",
-                                    "score": "4",
-                                    "team": {"displayName": "Texas Rangers"},
+                            "status": {
+                                "abstractGameState": "Final",
+                                "detailedState": "Final",
+                                "codedGameState": "F",
+                            },
+                            "teams": {
+                                "away": {
+                                    "score": 4,
+                                    "team": {"name": "Texas Rangers"},
                                 },
-                                {
-                                    "homeAway": "home",
-                                    "score": "6",
-                                    "team": {"displayName": "Houston Astros"},
+                                "home": {
+                                    "score": 6,
+                                    "team": {"name": "Houston Astros"},
                                 },
-                            ]
+                            },
                         }
-                    ],
+                    ]
                 }
             ]
         }
@@ -83,6 +87,50 @@ class TrackingServiceTests(unittest.TestCase):
         self.assertEqual(games[0]["away_score"], 4.0)
         self.assertEqual(games[0]["home_score"], 6.0)
         self.assertEqual(games[0]["actual_total"], 10.0)
+
+    def test_started_game_is_frozen_to_original_snapshot(self):
+        prediction = {
+            "predicted_total": 12.0,
+            "market_total": 13.5,
+            "edge": -1.5,
+            "abs_edge": 1.5,
+            "pick": "UNDER",
+            "edge_tier": "Strong Edge",
+            "best_book": "Live Book",
+            "best_line": 14.5,
+            "best_price": -110,
+            "best_abs_edge": 2.5,
+        }
+        tracked = {
+            "bz_total": "9.2",
+            "market_total": "8.5",
+            "edge": "0.7",
+            "pick": "OVER",
+            "edge_tier": "Lean",
+            "bookmaker_count": "6",
+            "model_version": "mlb_form_pitching_v2",
+        }
+        result = _freeze_prediction_from_row(prediction, tracked)
+        self.assertEqual(result["predicted_total"], 9.2)
+        self.assertEqual(result["market_total"], 8.5)
+        self.assertEqual(result["pick"], "OVER")
+        self.assertEqual(result["edge"], 0.7)
+        self.assertIsNone(result["abs_edge"])
+        self.assertIsNone(result["best_line"])
+        self.assertTrue(result["pick_locked"])
+
+    def test_missed_pregame_never_displays_live_pick(self):
+        prediction = {
+            "market_total": 11.5,
+            "edge": 2.0,
+            "pick": "OVER",
+            "best_line": 11.0,
+        }
+        result = _mark_missed_pregame(prediction)
+        self.assertEqual(result["pick"], "NO BET")
+        self.assertIsNone(result["market_total"])
+        self.assertIsNone(result["best_line"])
+        self.assertEqual(result["tracking_status"], "MISSED_PREGAME")
 
     def test_aggregate_uses_standard_minus_110_flat_units(self):
         rows = [
